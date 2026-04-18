@@ -1,14 +1,18 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.0.0
-// @description     115网盘视频整理：本地加工与网络改名双轨分离。根治01前缀与重复番号、彻底免疫空格日期/广告干扰、规范化TokyoHot/1pondo。已知问题：暂不支持JavDB刮削与FC2网站改名。
+// @version         1.1.0
+// @description     115网盘视频整理：本地加工与网络改名双轨分离。防误伤透视引擎(完美解决DASS截断)、精确归类NHK一位番号、根治01前缀与重复番号、彻底免疫空格日期/广告干扰、废弃本地乱码标题保留核心标记。
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
 // @domain          javbus.com
 // @domain          avmoo.host
 // @domain          avsox.host
+// @domain          javdb.com
+// @domain          fc2ppvdb.com
+// @connect         javdb.com
+// @connect         fc2ppvdb.com
 // @grant           GM_notification
 // @grant           GM_xmlhttpRequest
 // @grant           GM_setValue
@@ -130,10 +134,7 @@
     // 模块二：超级清洗字典与算法库
     // ==========================================
     
-    // 只提取需要保留的核心标记 (4K/60fps/破解/无码等)
-    const MARKER_REGEX = /(4K|8K|60fps|120fps|破解|流出|無修正|无码|中字|字幕|中文字幕)/gi;
-
-    // 废弃垃圾词汇 (FHD, 1080P等不被保留)
+    // 废弃垃圾词汇 (包含视频格式防干扰)
     const GARBAGE_WORDS = [
         'WWW','CARIBBEAN','TOKYOHOT','HEYDOUGA','UNCENSORED','LEAK','LEAKED',
         '2160P','1440P','1080P','720P','480P',
@@ -143,9 +144,12 @@
         'UNC','CEN','NO','WATERMARK','RARBG','BT','WEB-DL','WEBRIP','BLURAY','BDREMUX'
     ];
     const GARBAGE_REGEX = new RegExp('\\b(' + GARBAGE_WORDS.join('|') + ')\\b', 'gi');
+    
+    // 提取需要保留的核心标记 (4K, 8K, 破解, 无码等)
+    const MARKER_REGEX = /(4K|8K|60fps|120fps|破解|流出|無修正|无码|中字|字幕|中文字幕)/gi;
 
     const CODE_PREFIXES = [
-        'REBD', 'REBDB',
+        'DASS', 'REBD', 'REBDB', // 补充极易发生包含关系的厂牌
         'MIDE','MIAD','MIAA','MIAE','MIAS','MIGD','MIRD','MIFD','MIID','MIZD','MDYD','MBYD','MEYD',
         'WANZ','NWF','BMW','JBD','RBD','ATAD','SHKD','SSPD','ATID','ADN',
         'IPTD','IPZ','IPX','IPZZ','IPIT','IPITD','IDBD','SUPD','IPSD','DAN','AND',
@@ -249,18 +253,31 @@
         });
     }
 
+    // 智能前缀库匹配：融合正常边界匹配和透视防误伤匹配
     function matchCodeByPrefixLibrary(str) {
         if (!str) return null;
+        
+        // 1. 单词边界匹配优先 (应对标准的 DASS-234)
+        for (const prefix of CODE_PREFIXES) {
+            let reg = new RegExp(`\\b${prefix}[-_ ]?0*(\\d{1,5})\\b`, 'i');
+            let m = str.match(reg);
+            if (m) return `${prefix}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
+        }
+        
+        // 2. 透视匹配：应对黏连 (如 h_346rebd00680)
         let t = str.replace(/[^A-Z0-9]/g, '');
         for (const prefix of CODE_PREFIXES) {
             let idx = t.indexOf(prefix);
             if (idx !== -1) {
+                // 核心防误伤：如果前缀前面紧跟的是字母（比如 DASS 中的 SS），说明这是长番号的局部，必须跳过！
+                if (idx > 0 && /[A-Z]/.test(t[idx - 1])) {
+                    continue; 
+                }
                 const rest = t.slice(idx + prefix.length);
                 let m = rest.match(/^0*(\d{1,5})/);
                 if (m) {
                     let num = Number(m[1]).toString();
-                    if (num === '0') num = '0';
-                    return `${prefix}-${num.padStart(3, '0')}`;
+                    return `${prefix}-${(num === '0' ? '0' : num).padStart(3, '0')}`;
                 }
             }
         }
@@ -268,7 +285,11 @@
     }
 
     /**
-     * 强力智能提取引擎
+     * 强力智能提取引擎：
+     * 1. 绝对切除域名前缀
+     * 2. 安全提取日期（包含空格日期如 2014 01 01，提取后彻底销毁）
+     * 3. 透视提取番号、片段
+     * 4. 彻底摒弃本地标题内容
      */
     function parseVideoInfo(origTitle) {
         if (!origTitle) return null;
@@ -294,6 +315,7 @@
         let dateMatch = rawNoExt.match(dateRegex);
         if (dateMatch) {
             let rawDate = dateMatch[1];
+            // 格式化出标准的 YYYY-MM-DD
             let dParts = rawDate.trim().split(/[-_\/\.\s]+/);
             if (dParts.length === 3) {
                 let year = dParts[0].length === 2 ? "20" + dParts[0] : dParts[0];
@@ -302,7 +324,7 @@
             rawNoExt = rawNoExt.replace(dateMatch[0], ' '); 
         }
 
-        // 4. 构建用于刮削番号的底层干净字符串
+        // 4. 构建用于刮削番号的底层字符串
         let t = rawNoExt.toUpperCase().replace(MARKER_REGEX, ' ');
         t = t.replace(/(?:\b|_|^|@|】|\]|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
         t = t.replace(GARBAGE_REGEX, ' '); 
@@ -319,6 +341,7 @@
             queryCode = "FC2-PPV-" + fc2Match[1];
             displayCode = queryCode;
         } else {
+            // Tokyo Hot 处理 (严格只支持 N, H, K 单字母 + 4位数字)
             let tokyoMatch = t.match(/\b([NHK][-_ ]?\d{4})\b/i);
             if (tokyoMatch) {
                 queryCode = tokyoMatch[1].toUpperCase().replace(/[-_ ]/g, '');
@@ -336,10 +359,12 @@
                         displayCode = queryCode;
                     }
                 } else {
+                    // 调用带防误伤的库内匹配引擎
                     queryCode = matchCodeByPrefixLibrary(t);
                     if (queryCode) {
                         displayCode = queryCode;
                     } else {
+                        // 兜底匹配：[A-Z]{2,6} (至少两位字母)
                         const m = t.match(/\b([A-Z]{2,6})[-_ ]?0*(\d{2,5})\b/);
                         if (m) {
                             queryCode = `${m[1]}-${Number(m[2]).toString().padStart(3, '0')}`;
@@ -384,7 +409,7 @@
 
         let fullCode = part ? `${displayCode}-${part}` : displayCode;
 
-        // 返回核心数据，彻底丢弃残余的乱码本地标题！
+        // 返回最精简的数据组合，完全抛弃了以前杂乱的本地标题
         return {
             queryCode: queryCode, // 网络刮削用
             baseCode: displayCode, // 基础规范命名
@@ -400,6 +425,7 @@
     
     // 【本地改名专用】完全抛弃乱码标题，只保留番号、标记与日期
     function local_rename(fid, vInfo, suffix, addDate, callback) {
+        // 第二个参数故意传空字符串 ""，丢弃标题
         let newName = buildNewNameUnified(vInfo, "", [], vInfo.date, suffix);
         send_115(fid, newName, vInfo.fullCode, callback);
     }
@@ -429,7 +455,7 @@
 
     function rename_multi(fid, vInfo, suffix, addDate, callback) {
         if (/^FC2-PPV-\d{5,7}$/i.test(vInfo.baseCode)) {
-            // 已知问题：暂不支持FC2改名，可保留此逻辑备用或扩展
+            // FC2 改名备用逻辑
             requestFC2(fid, vInfo, suffix, addDate, vInfo.baseCode.split('-')[2], callback);
             return;
         }
@@ -441,7 +467,7 @@
             requestJavbus(fid, vInfo, suffix, addDate, javbusDirectAccess, function() {
                 if (typeof callback === 'function') callback();
             }, 0, function() {
-                // JavBus 失败后跳转 JavDB (注：JavDB功能可能受限)
+                // JavBus 失败后跳转 JavDB
                 requestMultiSource(fid, vInfo, suffix, addDate, callback, "javdb");
             });
         } else if (source === "javdb") {
@@ -495,7 +521,6 @@
                 });
 
                 if (title && title.length > 0) {
-                    // 如果网络没刮到日期，使用本地提取的 date 兜底
                     let finalDate = (addDate && date) ? date : (addDate ? vInfo.date : "");
                     let newName = buildNewNameUnified(vInfo, title, actresses, finalDate, suffix);
                     send_115(fid, newName, vInfo.fullCode, callback);
@@ -567,6 +592,7 @@
                     let parser = new DOMParser();
                     let doc = parser.parseFromString(html, "text/html");
 
+                    // 检查是否被JavDB直接跳转到详情页
                     if (doc.querySelector('.video-detail')) {
                         parseJavdbDoc(doc, fid, vInfo, suffix, addDate, callback);
                     } else {
