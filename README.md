@@ -29,7 +29,7 @@
 
 1. 首先安装用户脚本管理器扩展（如 [Tampermonkey](https://www.tampermonkey.net/)）。
 2. [点击此处直接安装脚本](https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026.user.js) （*注：安装时 Tampermonkey 会自动弹出*）。
-3. 也可以前往 [SleazyFork 页面](https://sleazyfork.org/) 搜索 "115Rename2026" 进行安装。
+3. 也可以前往 [greasyFork 页面](https://greasyfork.org/zh-CN/scripts/574424-115rename2026?locale_override=1) 搜索 "115Rename2026" 进行安装。
 
 ## 🤝 致谢与参考
 
