@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.7.0
-// @description     115网盘视频整理：本地加工+多站改名(JavLibrary→JavBus→xslist→JavDB)+评分获取+归档(按女优/系列)，分段统一，智能标记
+// @version         1.7.2
+// @description     115网盘视频整理：本地加工+多站改名(JavLibrary→JavBus→xslist→JavDB)+评分获取+归档(按女优/系列)，分段统一，智能标记，广告清理强化
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -27,6 +27,10 @@
 // ==/UserScript==
 
 (function () {
+    if (typeof window.$ === 'undefined') {
+        setTimeout(arguments.callee, 500);
+        return;
+    }
     "use strict";
 
     // ========== UI 初始化 ==========
@@ -146,7 +150,7 @@
         'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
         'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
         'NO', 'WATERMARK', 'RARBG', 'BT', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX',
-        '1440P', '1080P', '720P', '480P'
+        '1440P', '1080P', '720P', '480P', '3Q', '原'  // 新增广告残留
     ];
     const GARBAGE_REGEX = new RegExp('\\b(' + GARBAGE_WORDS.join('|') + ')\\b', 'gi');
     const MARKER_REGEX = /(4K|8K|60fps|120fps|破解|流出|leak(?:ed)?|無修正|无码|uncensored|中字|字幕|chinese|chs|cht|big5|gb|sc|中文字幕|2160p|VR)/gi;
@@ -158,6 +162,9 @@
         '4k': '4K', '8k': '8K', '60fps': '60fps', '120fps': '120fps',
         破解: '破解', '2160p': '4K', vr: 'VR'
     };
+
+    // 顽固广告标牌
+    const AD_BADGES = /\[3Q\]|\(原\)|\[BT\]|【广告】/gi;
 
     // ========== 番号前缀库 ==========
     const CODE_PREFIXES = [
@@ -294,12 +301,20 @@
         if (pm) part = (pm[1] || pm[2] || pm[3] || pm[4]).toUpperCase();
         const fullCode = part ? `${displayCode}-${part}` : displayCode;
 
+        // ===== 本地标题清洗（关键修改） =====
         let localTitle = rawNoExt.replace(MARKER_REGEX, ' ');
         localTitle = localTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/ig, ' ');
         const se = pm ? pm[0].replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') : baseRegexStr;
         const codeClean = new RegExp('(?:\\b|^|_|-)\\d{0,3}' + se + '(?:[-_ \\]\\[(){}]*(?:part|pt|cd|ep|sp|disc)?[-_ .]?[A-D0-9]{1,2}[\\]\\[(){}]?)?(?=\\b|_|$|\\.)', 'gi');
-        localTitle = localTitle.replace(codeClean, ' ').replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
-        localTitle = localTitle.replace(GARBAGE_REGEX, ' ').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+        localTitle = localTitle.replace(codeClean, ' ');
+        // 清除所有成对括号及内容
+        localTitle = localTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
+        // 清除顽固广告标牌
+        localTitle = localTitle.replace(AD_BADGES, ' ');
+        // 清除残留的垃圾词
+        localTitle = localTitle.replace(GARBAGE_REGEX, ' ');
+        // 清理多余符号和空格
+        localTitle = localTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
         return { queryCode, baseCode: displayCode, fullCode, markers, date: dateStr, localTitle };
     };
