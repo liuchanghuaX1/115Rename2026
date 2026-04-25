@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.7.2
-// @description     115网盘视频整理：本地加工+多站改名(JavLibrary→JavBus→xslist→JavDB)+评分获取+归档(按女优/系列)，分段统一，智能标记，广告清理强化
+// @version         1.7.3
+// @description     115网盘视频整理：本地加工+多站改名(JavLibrary→JavBus→xslist→JavDB)+评分获取+归档(按女优/系列)，分段统一，智能标记，广告清理
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -33,7 +33,7 @@
     }
     "use strict";
 
-    // ========== UI 初始化 ==========
+    // ========== UI ==========
     const rootInfoId = 'archive-root-info-' + Date.now();
     const cleanupExistingRootInfo = () => {
         try {
@@ -46,26 +46,24 @@
     cleanupExistingRootInfo();
 
     const uiStyle = `<style>
-        [id^="archive-root-info"] { position: fixed; top: 20px; right: 20px; max-width: 300px; background-color: rgba(0,0,0,0.8); color: white; padding: 12px 20px; border-radius: 4px; z-index: 9998; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border-left: 4px solid #1890ff; }
-        .custom-notification { position: fixed; top: 80px; right: 20px; max-width: 300px; background-color: rgba(0,0,0,0.8); color: white; padding: 12px 20px; border-radius: 4px; z-index: 9999; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: all 0.3s ease; opacity: 0; transform: translateY(-10px); }
+        [id^="archive-root-info"] { position: fixed; top: 20px; right: 20px; max-width: 300px; background: rgba(0,0,0,.8); color: #fff; padding: 12px 20px; border-radius: 4px; z-index: 9998; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.15); border-left: 4px solid #1890ff; }
+        .custom-notification { position: fixed; top: 80px; right: 20px; max-width: 300px; background: rgba(0,0,0,.8); color: #fff; padding: 12px 20px; border-radius: 4px; z-index: 9999; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.15); transition: all .3s ease; opacity: 0; transform: translateY(-10px); }
         .custom-notification.success { border-left: 4px solid #52c41a; }
         .custom-notification.error { border-left: 4px solid #f5222d; }
         .custom-notification.info { border-left: 4px solid #1890ff; }
         .custom-notification.show { opacity: 1; transform: translateY(0); }
-        #task-progress-box { position: fixed; bottom: 20px; right: 20px; min-width: 260px; background-color: rgba(0,0,0,0.8); color: #fff; padding: 10px 14px; border-radius: 4px; z-index: 9999; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        #task-progress-box { position: fixed; bottom: 20px; right: 20px; min-width: 260px; background: rgba(0,0,0,.8); color: #fff; padding: 10px 14px; border-radius: 4px; z-index: 9999; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
         #task-progress-box .tp-title { font-size: 12px; margin-bottom: 6px; }
-        #task-progress-box .tp-bar-outer { width: 100%; height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; }
-        #task-progress-box .tp-bar-inner { height: 100%; width: 0%; background: #1890ff; transition: width 0.2s ease; }
-        #task-progress-box .tp-text { margin-top: 4px; text-align: right; font-size: 11px; opacity: 0.9; }
+        #task-progress-box .tp-bar-outer { width: 100%; height: 6px; background: rgba(255,255,255,.15); border-radius: 3px; overflow: hidden; }
+        #task-progress-box .tp-bar-inner { height: 100%; width: 0%; background: #1890ff; transition: width .2s ease; }
+        #task-progress-box .tp-text { margin-top: 4px; text-align: right; font-size: 11px; opacity: .9; }
     </style>`;
     $('head').append(uiStyle);
 
     const ROOT_DIR_CID = "0";
     let archiveRootCid = GM_getValue("archiveRootCid", null);
     let archiveRootName = GM_getValue("archiveRootName", null);
-    const infoCache = {};
-    const actressCache = {};
-    const folderCidCache = {};
+    const infoCache = {}, actressCache = {}, folderCidCache = {};
 
     // ========== 并发与进度 ==========
     function runTasksWithLimit(tasks, limit, doneAll) {
@@ -145,12 +143,12 @@
     const javdbBase = "https://javdb.com";
     const javdbSearchBase = javdbBase + "/search?q=";
 
-    // ========== 垃圾词与标记 ==========
+    // ========== 垃圾词（仅标准干扰，无中文） ==========
     const GARBAGE_WORDS = [
         'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
         'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
         'NO', 'WATERMARK', 'RARBG', 'BT', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX',
-        '1440P', '1080P', '720P', '480P', '3Q', '原'  // 新增广告残留
+        '1440P', '1080P', '720P', '480P'
     ];
     const GARBAGE_REGEX = new RegExp('\\b(' + GARBAGE_WORDS.join('|') + ')\\b', 'gi');
     const MARKER_REGEX = /(4K|8K|60fps|120fps|破解|流出|leak(?:ed)?|無修正|无码|uncensored|中字|字幕|chinese|chs|cht|big5|gb|sc|中文字幕|2160p|VR)/gi;
@@ -163,8 +161,8 @@
         破解: '破解', '2160p': '4K', vr: 'VR'
     };
 
-    // 顽固广告标牌
-    const AD_BADGES = /\[3Q\]|\(原\)|\[BT\]|【广告】/gi;
+    // 顽固广告标牌（独立清理）
+    const AD_BADGES = /\[3Q\]|\(原\)|\[BT\]|【广告】|\[廣告\]/gi;
 
     // ========== 番号前缀库 ==========
     const CODE_PREFIXES = [
@@ -215,111 +213,114 @@
         return null;
     };
 
-    // ========== 核心解析 ==========
+    // ========== 核心解析（已保护） ==========
     const parseVideoInfo = origTitle => {
-        if (!origTitle) return null;
-        let raw = String(origTitle);
-        let rawNoExt = raw.replace(/\.\w{2,5}$/, '');
-        rawNoExt = rawNoExt.replace(/^.*?[a-zA-Z0-9_.-]+\.[a-zA-Z]{2,}(?:\/.*?)?@/i, '');
+        try {
+            if (!origTitle) return null;
+            let raw = String(origTitle);
+            let rawNoExt = raw.replace(/\.\w{2,5}$/, '');
+            rawNoExt = rawNoExt.replace(/^.*?[a-zA-Z0-9_.-]+\.[a-zA-Z]{2,}(?:\/.*?)?@/i, '');
 
-        let markers = [], m;
-        while ((m = MARKER_REGEX.exec(rawNoExt))) {
-            const nm = MARKER_MAP[m[1].toLowerCase()];
-            if (nm && !markers.includes(nm)) markers.push(nm);
-        }
-
-        let dateStr = '';
-        const dm = rawNoExt.match(/(?:\b|_|^|@|】|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i);
-        if (dm) {
-            const parts = dm[1].trim().split(/[-_\/\.\s]+/);
-            if (parts.length === 3) {
-                const year = parts[0].length === 2 ? '20' + parts[0] : parts[0];
-                dateStr = `${year}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+            let markers = [], m;
+            while ((m = MARKER_REGEX.exec(rawNoExt))) {
+                const nm = MARKER_MAP[m[1].toLowerCase()];
+                if (nm && !markers.includes(nm)) markers.push(nm);
             }
-            rawNoExt = rawNoExt.replace(dm[0], ' ');
-        }
 
-        let t = rawNoExt.toUpperCase().replace(MARKER_REGEX, ' ');
-        t = t.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
-        t = t.replace(GARBAGE_REGEX, ' ').replace(/[\[\]\{\}（）【】]/g, ' ').replace(/[_\.\-\/\\]+/g, ' ');
-        t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
+            let dateStr = '';
+            const dm = rawNoExt.match(/(?:\b|_|^|@|】|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i);
+            if (dm) {
+                const parts = dm[1].trim().split(/[-_\/\.\s]+/);
+                if (parts.length === 3) {
+                    const year = parts[0].length === 2 ? '20' + parts[0] : parts[0];
+                    dateStr = `${year}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+                }
+                rawNoExt = rawNoExt.replace(dm[0], ' ');
+            }
 
-        let queryCode = null, displayCode = null;
-        const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
-        if (fc2m && fc2m[1]) {
-            queryCode = 'FC2-PPV-' + fc2m[1];
-            displayCode = queryCode;
-        } else {
-            const tokyoM = t.match(/\b([NHK][-_ ]?\d{4})\b/i);
-            if (tokyoM) {
-                queryCode = tokyoM[1].toUpperCase().replace(/[-_ ]/g, '');
-                displayCode = 'TokyoHot-' + queryCode;
+            let t = rawNoExt.toUpperCase().replace(MARKER_REGEX, ' ');
+            t = t.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
+            t = t.replace(GARBAGE_REGEX, ' ').replace(/[\[\]\{\}（）【】]/g, ' ').replace(/[_\.\-\/\\]+/g, ' ');
+            t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
+
+            let queryCode = null, displayCode = null;
+            const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
+            if (fc2m && fc2m[1]) {
+                queryCode = 'FC2-PPV-' + fc2m[1];
+                displayCode = queryCode;
             } else {
-                const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
-                if (numM) {
-                    queryCode = `${numM[1]}_${numM[2]}`;
-                    if (/1pon/i.test(rawNoExt)) displayCode = `1pondo-${numM[1]}-${numM[2]}`;
-                    else if (/carib/i.test(rawNoExt)) displayCode = `Caribbean-${numM[1]}-${numM[2]}`;
-                    else if (/paco/i.test(rawNoExt)) displayCode = `Pacopacomama-${numM[1]}-${numM[2]}`;
-                    else if (/heydouga/i.test(rawNoExt)) displayCode = `Heydouga-${numM[1]}-${numM[2]}`;
-                    else if (/tokyo/i.test(rawNoExt)) displayCode = `TokyoHot-${numM[1]}-${numM[2]}`;
-                    else { queryCode = `${numM[1]}-${numM[2]}`; displayCode = queryCode; }
+                const tokyoM = t.match(/\b([NHK][-_ ]?\d{4})\b/i);
+                if (tokyoM) {
+                    queryCode = tokyoM[1].toUpperCase().replace(/[-_ ]/g, '');
+                    displayCode = 'TokyoHot-' + queryCode;
                 } else {
-                    queryCode = matchCodeByPrefix(t);
-                    if (queryCode) displayCode = queryCode;
-                    else {
-                        const rm = t.match(/\b([A-Z]{2,6})[-_ ]?0*(\d{2,5})\b/);
-                        if (rm) { queryCode = `${rm[1]}-${Number(rm[2]).toString().padStart(3, '0')}`; displayCode = queryCode; }
+                    const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
+                    if (numM) {
+                        queryCode = `${numM[1]}_${numM[2]}`;
+                        if (/1pon/i.test(rawNoExt)) displayCode = `1pondo-${numM[1]}-${numM[2]}`;
+                        else if (/carib/i.test(rawNoExt)) displayCode = `Caribbean-${numM[1]}-${numM[2]}`;
+                        else if (/paco/i.test(rawNoExt)) displayCode = `Pacopacomama-${numM[1]}-${numM[2]}`;
+                        else if (/heydouga/i.test(rawNoExt)) displayCode = `Heydouga-${numM[1]}-${numM[2]}`;
+                        else if (/tokyo/i.test(rawNoExt)) displayCode = `TokyoHot-${numM[1]}-${numM[2]}`;
+                        else { queryCode = `${numM[1]}-${numM[2]}`; displayCode = queryCode; }
+                    } else {
+                        queryCode = matchCodeByPrefix(t);
+                        if (queryCode) displayCode = queryCode;
+                        else {
+                            const rm = t.match(/\b([A-Z]{2,6})[-_ ]?0*(\d{2,5})\b/);
+                            if (rm) { queryCode = `${rm[1]}-${Number(rm[2]).toString().padStart(3, '0')}`; displayCode = queryCode; }
+                        }
                     }
                 }
             }
-        }
-        if (!queryCode) return null;
+            if (!queryCode) return null;
 
-        const safeB = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
-        if (raw.indexOf("中文") !== -1 || new RegExp(safeB + "[_-](UC|C)\\b", "i").test(raw)) {
-            if (!markers.includes('中文字幕')) markers.push('中文字幕');
-        }
-        if (raw.indexOf("无码") !== -1 || new RegExp(safeB + "[_-](UC|U)\\b", "i").test(raw)) {
-            if (!markers.includes('无码')) markers.push('无码');
-        }
+            const safeB = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
+            if (raw.indexOf("中文") !== -1 || new RegExp(safeB + "[_-](UC|C)\\b", "i").test(raw)) {
+                if (!markers.includes('中文字幕')) markers.push('中文字幕');
+            }
+            if (raw.indexOf("无码") !== -1 || new RegExp(safeB + "[_-](UC|U)\\b", "i").test(raw)) {
+                if (!markers.includes('无码')) markers.push('无码');
+            }
 
-        let part = '';
-        let baseRegexStr;
-        if (queryCode.startsWith('FC2-PPV-')) {
-            baseRegexStr = '(?:\\b|\\d{0,3})(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]?0*' + queryCode.split('-')[2];
-        } else if (displayCode.startsWith('TokyoHot-')) {
-            baseRegexStr = '(?:\\b|\\d{0,3})(?:TOKYO[-_ ]*HOT[-_ ]*)?0*' + queryCode;
-        } else if (displayCode.match(/^[a-zA-Z]+-\d{6}-\d{3}$/)) {
-            baseRegexStr = '(?:\\b|\\d{0,3})(?:1pondo|carib(?:bean)?|pacopacomama|heydouga|tokyohot)?[-_ ]*' + displayCode.split('-').slice(1).join('[-_ ]*0*');
-        } else {
-            const parts = queryCode.split(/[-_]/);
-            baseRegexStr = '(?:\\b|\\d{0,3})' + parts[0] + '[-_ ]?0*' + (parts[1] || '');
+            let part = '';
+            let baseRegexStr;
+            if (queryCode.startsWith('FC2-PPV-')) {
+                baseRegexStr = '(?:\\b|\\d{0,3})(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]?0*' + queryCode.split('-')[2];
+            } else if (displayCode.startsWith('TokyoHot-')) {
+                baseRegexStr = '(?:\\b|\\d{0,3})(?:TOKYO[-_ ]*HOT[-_ ]*)?0*' + queryCode;
+            } else if (displayCode.match(/^[a-zA-Z]+-\d{6}-\d{3}$/)) {
+                baseRegexStr = '(?:\\b|\\d{0,3})(?:1pondo|carib(?:bean)?|pacopacomama|heydouga|tokyohot)?[-_ ]*' + displayCode.split('-').slice(1).join('[-_ ]*0*');
+            } else {
+                const parts = queryCode.split(/[-_]/);
+                baseRegexStr = '(?:\\b|\\d{0,3})' + parts[0] + '[-_ ]?0*' + (parts[1] || '');
+            }
+            const pRegex = new RegExp(baseRegexStr + '(?:[-_\\s.]*(?:part|pt|cd|ep|sp|disc)[-_.\\s]*([a-zA-Z]{1,2}|\\d{1,3})|[-_\\s]+([a-zA-Z]{1,2}|\\d{1,3})|\\s*[\\(\\[\\{]([a-zA-Z]{1,2}|\\d{1,3})[\\)\\]\\}]|\\s*\\.\\s*([a-zA-Z]{1,2}|\\d{1,3}))(?=\\s|$|\\.|-|_|【)', 'i');
+            const pm = rawNoExt.match(pRegex);
+            if (pm) part = (pm[1] || pm[2] || pm[3] || pm[4]).toUpperCase();
+            const fullCode = part ? `${displayCode}-${part}` : displayCode;
+
+            let localTitle = rawNoExt.replace(MARKER_REGEX, ' ');
+            localTitle = localTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/ig, ' ');
+            const se = pm ? pm[0].replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') : baseRegexStr;
+            const codeClean = new RegExp('(?:\\b|^|_|-)\\d{0,3}' + se + '(?:[-_ \\]\\[(){}]*(?:part|pt|cd|ep|sp|disc)?[-_ .]?[A-D0-9]{1,2}[\\]\\[(){}]?)?(?=\\b|_|$|\\.)', 'gi');
+            localTitle = localTitle.replace(codeClean, ' ');
+            // 清除所有成对括号
+            localTitle = localTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
+            // 顽固广告标牌
+            localTitle = localTitle.replace(AD_BADGES, ' ');
+            // 残余垃圾
+            localTitle = localTitle.replace(GARBAGE_REGEX, ' ');
+            localTitle = localTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+            return { queryCode, baseCode: displayCode, fullCode, markers, date: dateStr, localTitle };
+        } catch (e) {
+            console.error('parseVideoInfo error:', e);
+            return null;
         }
-        const pRegex = new RegExp(baseRegexStr + '(?:[-_\\s.]*(?:part|pt|cd|ep|sp|disc)[-_.\\s]*([a-zA-Z]{1,2}|\\d{1,3})|[-_\\s]+([a-zA-Z]{1,2}|\\d{1,3})|\\s*[\\(\\[\\{]([a-zA-Z]{1,2}|\\d{1,3})[\\)\\]\\}]|\\s*\\.\\s*([a-zA-Z]{1,2}|\\d{1,3}))(?=\\s|$|\\.|-|_|【)', 'i');
-        const pm = rawNoExt.match(pRegex);
-        if (pm) part = (pm[1] || pm[2] || pm[3] || pm[4]).toUpperCase();
-        const fullCode = part ? `${displayCode}-${part}` : displayCode;
-
-        // ===== 本地标题清洗（关键修改） =====
-        let localTitle = rawNoExt.replace(MARKER_REGEX, ' ');
-        localTitle = localTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/ig, ' ');
-        const se = pm ? pm[0].replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') : baseRegexStr;
-        const codeClean = new RegExp('(?:\\b|^|_|-)\\d{0,3}' + se + '(?:[-_ \\]\\[(){}]*(?:part|pt|cd|ep|sp|disc)?[-_ .]?[A-D0-9]{1,2}[\\]\\[(){}]?)?(?=\\b|_|$|\\.)', 'gi');
-        localTitle = localTitle.replace(codeClean, ' ');
-        // 清除所有成对括号及内容
-        localTitle = localTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
-        // 清除顽固广告标牌
-        localTitle = localTitle.replace(AD_BADGES, ' ');
-        // 清除残留的垃圾词
-        localTitle = localTitle.replace(GARBAGE_REGEX, ' ');
-        // 清理多余符号和空格
-        localTitle = localTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-
-        return { queryCode, baseCode: displayCode, fullCode, markers, date: dateStr, localTitle };
     };
 
-    // ========== 构建新名称 & 发送 ==========
+    // ========== 命名与发送 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
         let name = vInfo.fullCode;
         if (title) name += ' ' + title.trim();
@@ -583,7 +584,7 @@
         });
     };
 
-    // ========== 归档功能 ==========
+    // ========== 归档 ==========
     const getSeriesFromCode = code => {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
         if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
