@@ -20,6 +20,10 @@
 // @grant           GM_setValue
 // @grant           GM_getValue
 // @license         MIT
+// @homepageURL     https://github.com/liuchanghuaX1/115Rename2026
+// @supportURL      https://github.com/liuchanghuaX1/115Rename2026/issues
+// @downloadURL     https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026.user.js
+// @updateURL       https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026.user.js
 // ==/UserScript==
 
 (function () {
@@ -574,7 +578,7 @@
 
     const findOrCreateFolderAndMove = (fid, folderName, successCallback, failCallback) => {
         const cid = archiveRootCid || ROOT_DIR_CID;
-        const cleanName = folderName.replace(/[\\/:*?"<>|]/g, ' '); // 简单净化
+        const cleanName = folderName.replace(/[\\/:*?"<>|]/g, ' ');
         if (folderCidCache[cleanName]) {
             moveFileToFolder(fid, folderCidCache[cleanName], cleanName, successCallback, failCallback);
             return;
@@ -591,7 +595,6 @@
                     return;
                 }
             }
-            // 创建文件夹
             $.post("https://webapi.115.com/files/add", { pid: cid, cname: cleanName }, createData => {
                 const createResult = typeof createData === 'string' ? JSON.parse(createData) : createData;
                 if (createResult.state) {
@@ -599,7 +602,6 @@
                     moveFileToFolder(fid, createResult.cid, cleanName, successCallback, failCallback);
                 } else {
                     if (createResult.errno === 20004) {
-                        // 重名，再次搜索
                         $.get("https://webapi.115.com/files/search", { search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000 }, data2 => {
                             const res2 = JSON.parse(data2);
                             const found2 = res2.data && res2.data.list.find(item => item.name === cleanName && item.file_type === "0");
@@ -654,10 +656,8 @@
             findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
             return;
         }
-        // 尝试从缓存或在线查询（只查JavBus，简化）
-        const url = javbusDirectAccess + code;
         GM_xmlhttpRequest({
-            method: "GET", url: url,
+            method: "GET", url: javbusDirectAccess + code,
             onload: xhr => {
                 const $r = $(xhr.responseText);
                 const actresses = [];
@@ -667,7 +667,6 @@
                     const folderName = (archiveMode === "2" && seriesName) ? `${actresses[0]} - ${seriesName}` : actresses[0];
                     findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
                 } else {
-                    // 尝试无码站
                     GM_xmlhttpRequest({
                         method: "GET", url: javbusUncensoredBase + code,
                         onload: xhr2 => {
