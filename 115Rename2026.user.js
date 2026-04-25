@@ -1,241 +1,161 @@
 // ==UserScript==
-// @name            115Rename2026+
+// @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.5.0
-// @description     115网盘视频整理：保留本地番号加工与网络改名分离，多站改名(JavLibrary→JavBus→xslist)，增加信息缓存、有限并发、快速番号解析。已知问题：暂不支持JavDB刮削与FC2网站改名。
-// @author          sonarlee (多站轮询由原版脚本移植)
+// @version         1.7.0
+// @description     115网盘视频整理：本地加工+多站改名(JavLibrary→JavBus→xslist→JavDB)+评分获取+归档(按女优/系列)，分段统一，智能标记
+// @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
 // @domain          javbus.com
 // @domain          avmoo.host
 // @domain          avsox.host
+// @domain          javdb.com
 // @connect         javbus.com
 // @connect         javlibrary.com
 // @connect         xslist.org
+// @connect         javdb.com
 // @connect         webapi.115.com
 // @grant           GM_notification
 // @grant           GM_xmlhttpRequest
 // @grant           GM_setValue
 // @grant           GM_getValue
 // @license         MIT
-// @homepageURL     https://github.com/liuchanghuaX1/115Rename2026
-// @supportURL      https://github.com/liuchanghuaX1/115Rename2026/issues
-// @downloadURL     https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026+.user.js
-// @updateURL       https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026+.user.js
 // ==/UserScript==
 
 (function () {
     "use strict";
 
-    // ==========================================
-    // 模块一：全局UI与提示 (稳定版，加入进度条)
-    // ==========================================
+    // ========== UI 初始化 ==========
     const rootInfoId = 'archive-root-info-' + Date.now();
-
-    function cleanupExistingRootInfo() {
+    const cleanupExistingRootInfo = () => {
         try {
             document.querySelectorAll('[id^="archive-root-info"]').forEach(el => el.remove());
             document.querySelectorAll('iframe').forEach(iframe => {
-                try {
-                    if (iframe.contentDocument) {
-                        iframe.contentDocument.querySelectorAll('[id^="archive-root-info"]').forEach(el => el.remove());
-                    }
-                } catch (e) { }
+                try { if (iframe.contentDocument) iframe.contentDocument.querySelectorAll('[id^="archive-root-info"]').forEach(el => el.remove()); } catch (e) { }
             });
         } catch (e) { }
-    }
+    };
     cleanupExistingRootInfo();
 
-    const uiStyle = `
-    <style>
-        [id^="archive-root-info"] {
-            position: fixed; top: 20px; right: 20px; max-width: 300px;
-            background-color: rgba(0, 0, 0, 0.8); color: white; padding: 12px 20px;
-            border-radius: 4px; z-index: 9998; font-size: 14px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); border-left: 4px solid #1890ff;
-        }
-        .custom-notification {
-            position: fixed; top: 80px; right: 20px; max-width: 300px;
-            background-color: rgba(0, 0, 0, 0.8); color: white; padding: 12px 20px;
-            border-radius: 4px; z-index: 9999; font-size: 14px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); transition: all 0.3s ease;
-            opacity: 0; transform: translateY(-10px);
-        }
+    const uiStyle = `<style>
+        [id^="archive-root-info"] { position: fixed; top: 20px; right: 20px; max-width: 300px; background-color: rgba(0,0,0,0.8); color: white; padding: 12px 20px; border-radius: 4px; z-index: 9998; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border-left: 4px solid #1890ff; }
+        .custom-notification { position: fixed; top: 80px; right: 20px; max-width: 300px; background-color: rgba(0,0,0,0.8); color: white; padding: 12px 20px; border-radius: 4px; z-index: 9999; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: all 0.3s ease; opacity: 0; transform: translateY(-10px); }
         .custom-notification.success { border-left: 4px solid #52c41a; }
         .custom-notification.error { border-left: 4px solid #f5222d; }
         .custom-notification.info { border-left: 4px solid #1890ff; }
         .custom-notification.show { opacity: 1; transform: translateY(0); }
-        #task-progress-box {
-            position: fixed; bottom: 20px; right: 20px; min-width: 260px;
-            background-color: rgba(0,0,0,0.8); color: #fff; padding: 10px 14px;
-            border-radius: 4px; z-index: 9999; font-size: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        }
-        #task-progress-box .tp-title {
-            font-size: 12px; margin-bottom: 6px;
-        }
-        #task-progress-box .tp-bar-outer {
-            width: 100%; height: 6px; background: rgba(255,255,255,0.15);
-            border-radius: 3px; overflow: hidden;
-        }
-        #task-progress-box .tp-bar-inner {
-            height: 100%; width: 0%; background: #1890ff; transition: width 0.2s ease;
-        }
-        #task-progress-box .tp-text {
-            margin-top: 4px; text-align: right; font-size: 11px; opacity: 0.9;
-        }
+        #task-progress-box { position: fixed; bottom: 20px; right: 20px; min-width: 260px; background-color: rgba(0,0,0,0.8); color: #fff; padding: 10px 14px; border-radius: 4px; z-index: 9999; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        #task-progress-box .tp-title { font-size: 12px; margin-bottom: 6px; }
+        #task-progress-box .tp-bar-outer { width: 100%; height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; }
+        #task-progress-box .tp-bar-inner { height: 100%; width: 0%; background: #1890ff; transition: width 0.2s ease; }
+        #task-progress-box .tp-text { margin-top: 4px; text-align: right; font-size: 11px; opacity: 0.9; }
     </style>`;
     $('head').append(uiStyle);
 
     const ROOT_DIR_CID = "0";
     let archiveRootCid = GM_getValue("archiveRootCid", null);
     let archiveRootName = GM_getValue("archiveRootName", null);
+    const infoCache = {};
+    const actressCache = {};
+    const folderCidCache = {};
 
-    // --- 信息缓存 (移植自原多站脚本) ---
-    const infoCache = {};   // 番号 → { title, date, actresses }
-    const actressCache = {};   // 番号 → 女优数组
-
-    // --- 并发任务队列 (移植自原多站脚本) ---
+    // ========== 并发与进度 ==========
     function runTasksWithLimit(tasks, limit, doneAll) {
-        if (!tasks || tasks.length === 0) {
-            doneAll && doneAll();
-            return;
-        }
-        let index = 0;
-        let running = 0;
-
-        function next() {
-            if (index >= tasks.length && running === 0) {
-                doneAll && doneAll();
-                return;
-            }
+        if (!tasks.length) { doneAll && doneAll(); return; }
+        let index = 0, running = 0;
+        const next = () => {
+            if (index >= tasks.length && running === 0) { doneAll && doneAll(); return; }
             while (running < limit && index < tasks.length) {
-                const task = tasks[index++];
-                running++;
-                task(() => {
-                    running--;
-                    next();
-                });
+                const task = tasks[index++]; running++;
+                task(() => { running--; next(); });
             }
-        }
+        };
         next();
     }
 
-    // --- 进度条对象 (移植自原多站脚本) ---
     window.progressBox = {
         init(title, total) {
-            this.total = total || 0;
-            this.current = 0;
-            this.title = title || '任务进度';
+            this.total = total || 0; this.current = 0; this.title = title || '任务进度';
             let $box = $('#task-progress-box');
             if ($box.length === 0) {
-                $('body').append(`
-                    <div id="task-progress-box" style="display:none;">
-                        <div class="tp-title"></div>
-                        <div class="tp-bar-outer">
-                            <div class="tp-bar-inner"></div>
-                        </div>
-                        <div class="tp-text"></div>
-                    </div>
-                `);
+                $('body').append(`<div id="task-progress-box" style="display:none;"><div class="tp-title"></div><div class="tp-bar-outer"><div class="tp-bar-inner"></div></div><div class="tp-text"></div></div>`);
                 $box = $('#task-progress-box');
             }
             $box.find('.tp-title').text(this.title);
-            this.update(0);
-            $box.show();
+            this.update(0); $box.show();
         },
         update(doneCount) {
             this.current = doneCount;
-            const total = this.total || 1;
-            const percent = Math.min(100, Math.round(doneCount * 100 / total));
+            const pct = Math.min(100, Math.round(doneCount * 100 / (this.total || 1)));
             const $box = $('#task-progress-box');
-            $box.find('.tp-bar-inner').css('width', percent + '%');
-            $box.find('.tp-text').text(`${doneCount}/${this.total} (${percent}%)`);
+            $box.find('.tp-bar-inner').css('width', pct + '%');
+            $box.find('.tp-text').text(`${doneCount}/${this.total} (${pct}%)`);
         },
-        finish() {
-            this.update(this.total);
-            setTimeout(() => {
-                $('#task-progress-box').fadeOut(300);
-            }, 800);
-        }
+        finish() { this.update(this.total); setTimeout(() => $('#task-progress-box').fadeOut(300), 800); }
     };
 
-    // --- 通知 ---
-    window.showPageNotification = function (message, type = 'info', duration = 3000) {
-        if (duration === 3000) {
-            if (type === 'success') duration = 3000;
-            else if (type === 'error') duration = 5000;
-        }
-        const notificationId = 'custom-notification-' + Date.now();
-        $('body').append(`<div id="${notificationId}" class="custom-notification ${type}">${message}</div>`);
-        setTimeout(() => { $(`#${notificationId}`).addClass('show'); }, 10);
-        setTimeout(() => {
-            $(`#${notificationId}`).removeClass('show');
-            setTimeout(() => { $(`#${notificationId}`).remove(); }, 300);
-        }, duration);
+    window.showPageNotification = (message, type = 'info', duration = 3000) => {
+        if (duration === 3000) { if (type === 'success') duration = 3000; else if (type === 'error') duration = 5000; }
+        const id = 'cn-' + Date.now();
+        $('body').append(`<div id="${id}" class="custom-notification ${type}">${message}</div>`);
+        setTimeout(() => $(`#${id}`).addClass('show'), 10);
+        setTimeout(() => { $(`#${id}`).removeClass('show'); setTimeout(() => $(`#${id}`).remove(), 300); }, duration);
     };
 
-    function showArchiveRootInfo() {
+    const showArchiveRootInfo = () => {
         cleanupExistingRootInfo();
-        let msg = (archiveRootCid && archiveRootName)
-            ? `当前归档根目录: "${archiveRootName}"`
-            : "当前无归档根目录，将使用115网盘根目录";
-        const infoElement = $(`<div id="${rootInfoId}" class="archive-root-info">${msg}</div>`);
-        if (window.self === window.top) {
-            $('body').append(infoElement);
-        }
-    }
+        let msg = (archiveRootCid && archiveRootName) ? `当前归档根目录: "${archiveRootName}"` : "当前无归档根目录，将使用115网盘根目录";
+        if (window.self === window.top) $('body').append(`<div id="${rootInfoId}" class="archive-root-info">${msg}</div>`);
+    };
 
     let rootInfoTimer = null;
-    function initializeRootInfo() {
+    const initializeRootInfo = () => {
         if (window.self !== window.top) return;
         if (rootInfoTimer) clearTimeout(rootInfoTimer);
-        rootInfoTimer = setTimeout(function () {
-            showArchiveRootInfo();
-            rootInfoTimer = null;
-        }, 2000);
-    }
-
+        rootInfoTimer = setTimeout(() => { showArchiveRootInfo(); rootInfoTimer = null; }, 2000);
+    };
     $(window).on('load', initializeRootInfo);
     if (document.readyState === 'complete') initializeRootInfo();
 
-    // =============================
-    // 菜单注入
-    // =============================
-    let rename_list = `
-            <li id="rename_list">
-                <a id="local_code_process" class="mark" href="javascript:;">本地番号加工</a>
-                <a id="rename_all_multi_date" class="mark" href="javascript:;">改名(多网站轮询)_统一格式</a>
-                <a id="archive_to_folder" class="mark" href="javascript:;">归档至文件夹</a>
-                <a id="set_archive_root" class="mark" href="javascript:;">设置为归档根目录</a>
-                <a id="get_javdb_rating" class="mark" href="javascript:;">获取javdb评分</a>
-            </li>
-        `;
+    // ========== 菜单 ==========
+    const rename_list = `
+        <li id="rename_list">
+            <a id="local_code_process" class="mark" href="javascript:;">本地番号加工</a>
+            <a id="rename_all_multi_date" class="mark" href="javascript:;">改名(多网站轮询)</a>
+            <a id="archive_to_folder" class="mark" href="javascript:;">归档至文件夹</a>
+            <a id="set_archive_root" class="mark" href="javascript:;">设为归档根目录</a>
+            <a id="get_javdb_rating" class="mark" href="javascript:;">获取javdb评分</a>
+        </li>`;
 
     let interval = setInterval(buttonInterval, 1000);
-
-    // 多站信息源基地址
     const javbusBase = "https://www.javbus.com/";
     const javbusDirectAccess = javbusBase;
     const javbusUncensoredBase = javbusBase + "uncensored/";
     const javlibSearchBase = "https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=";
     const javlibBase = "https://www.javlibrary.com/";
     const xslistBase = "https://xslist.org/tw/";
+    const javdbBase = "https://javdb.com";
+    const javdbSearchBase = javdbBase + "/search?q=";
 
-    // ==========================================
-    // 模块二：超级清洗字典与算法库 (原版保留)
-    // ==========================================
+    // ========== 垃圾词与标记 ==========
     const GARBAGE_WORDS = [
-        'WWW', 'CARIBBEAN', 'TOKYOHOT', 'HEYDOUGA', 'UNCENSORED', 'LEAK', 'LEAKED',
-        '2160P', '1440P', '1080P', '720P', '480P',
-        'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
-        'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'CHS', 'CHT', 'BIG5', 'GB', 'SC',
-        'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
-        'UNC', 'CEN', 'NO', 'WATERMARK', 'RARBG', 'BT', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX'
+        'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
+        'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
+        'NO', 'WATERMARK', 'RARBG', 'BT', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX',
+        '1440P', '1080P', '720P', '480P'
     ];
     const GARBAGE_REGEX = new RegExp('\\b(' + GARBAGE_WORDS.join('|') + ')\\b', 'gi');
-    const MARKER_REGEX = /(4K|8K|60fps|120fps|破解|流出|無修正|无码|中字|字幕|中文字幕)/gi;
+    const MARKER_REGEX = /(4K|8K|60fps|120fps|破解|流出|leak(?:ed)?|無修正|无码|uncensored|中字|字幕|chinese|chs|cht|big5|gb|sc|中文字幕|2160p|VR)/gi;
+    const MARKER_MAP = {
+        leak: '流出', leaked: '流出', 流出: '流出',
+        uncensored: '无码', 無修正: '无码', 无码: '无码',
+        chs: '中文字幕', cht: '中文字幕', gb: '中文字幕', big5: '中文字幕', sc: '中文字幕', chinese: '中文字幕',
+        中字: '中文字幕', 字幕: '中文字幕', 中文: '中文字幕', 中文字幕: '中文字幕',
+        '4k': '4K', '8k': '8K', '60fps': '60fps', '120fps': '120fps',
+        破解: '破解', '2160p': '4K', vr: 'VR'
+    };
 
+    // ========== 番号前缀库 ==========
     const CODE_PREFIXES = [
         'T28', 'S2M', '300MAAN', '200GANA', '259LUXU', '277DCV', '230GANA', '261ADA',
         'DASS', 'REBD', 'REBDB', 'MIDV', 'SSIS', 'PRED', 'PRTD', 'FSDSS', 'SIVR', 'SAMA',
@@ -266,533 +186,685 @@
         'COSETT', 'MXGS', 'MX3DS', 'IPBZ', 'FSDSS', 'SVMGM', 'MIDA'
     ].sort((a, b) => b.length - a.length);
 
-    function matchCodeByPrefixLibrary(str) {
+    const matchCodeByPrefix = str => {
         if (!str) return null;
-        for (const prefix of CODE_PREFIXES) {
-            let reg = new RegExp(`\\b${prefix}[-_ ]?0*(\\d{1,5})\\b`, 'i');
-            let m = str.match(reg);
-            if (m) return `${prefix}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
+        for (const p of CODE_PREFIXES) {
+            const m = str.match(new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})\\b`, 'i'));
+            if (m) return `${p}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
         }
-        let t = str.replace(/[^A-Z0-9]/ig, '').toUpperCase();
-        for (const prefix of CODE_PREFIXES) {
-            let idx = t.indexOf(prefix);
-            if (idx !== -1) {
-                if (idx > 0 && /[A-Z]/.test(t[idx - 1])) continue;
-                const rest = t.slice(idx + prefix.length);
-                let m = rest.match(/^0*(\d{1,5})/);
-                if (m) {
-                    let num = Number(m[1]).toString();
-                    return `${prefix}-${(num === '0' ? '0' : num).padStart(3, '0')}`;
-                }
+        const t = str.replace(/[^A-Z0-9]/ig, '').toUpperCase();
+        for (const p of CODE_PREFIXES) {
+            const idx = t.indexOf(p);
+            if (idx !== -1 && (idx === 0 || !/[A-Z]/.test(t[idx - 1]))) {
+                const rest = t.slice(idx + p.length);
+                const m = rest.match(/^0*(\d{1,5})/);
+                if (m) return `${p}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
             }
         }
         return null;
-    }
+    };
 
-    function parseVideoInfo(origTitle) {
+    // ========== 核心解析 ==========
+    const parseVideoInfo = origTitle => {
         if (!origTitle) return null;
         let raw = String(origTitle);
         let rawNoExt = raw.replace(/\.\w{2,5}$/, '');
         rawNoExt = rawNoExt.replace(/^.*?[a-zA-Z0-9_.-]+\.[a-zA-Z]{2,}(?:\/.*?)?@/i, '');
 
-        let markers = [];
-        let mMatch;
-        while ((mMatch = MARKER_REGEX.exec(rawNoExt)) !== null) {
-            let m = mMatch[1].toUpperCase().replace(/^[-_ ]/, '');
-            if (m === '無修正') m = '无码';
-            if (m === '中字' || m === '字幕' || m === '中文字幕') m = '中文字幕';
-            if (!markers.includes(m)) markers.push(m);
+        let markers = [], m;
+        while ((m = MARKER_REGEX.exec(rawNoExt))) {
+            const nm = MARKER_MAP[m[1].toLowerCase()];
+            if (nm && !markers.includes(nm)) markers.push(nm);
         }
 
-        let dateStr = "";
-        let dateRegex = /(?:\b|_|^|@|】|\]|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i;
-        let dateMatch = rawNoExt.match(dateRegex);
-        if (dateMatch) {
-            let rawDate = dateMatch[1];
-            let dParts = rawDate.trim().split(/[-_\/\.\s]+/);
-            if (dParts.length === 3) {
-                let year = dParts[0].length === 2 ? "20" + dParts[0] : dParts[0];
-                dateStr = `${year}-${dParts[1].padStart(2, '0')}-${dParts[2].padStart(2, '0')}`;
+        let dateStr = '';
+        const dm = rawNoExt.match(/(?:\b|_|^|@|】|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i);
+        if (dm) {
+            const parts = dm[1].trim().split(/[-_\/\.\s]+/);
+            if (parts.length === 3) {
+                const year = parts[0].length === 2 ? '20' + parts[0] : parts[0];
+                dateStr = `${year}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
             }
-            rawNoExt = rawNoExt.replace(dateMatch[0], ' ');
+            rawNoExt = rawNoExt.replace(dm[0], ' ');
         }
 
         let t = rawNoExt.toUpperCase().replace(MARKER_REGEX, ' ');
-        t = t.replace(/(?:\b|_|^|@|】|\]|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
-        t = t.replace(GARBAGE_REGEX, ' ');
-        t = t.replace(/[\[\]\(\)\{\}（）【】]/g, ' ');
-        t = t.replace(/[_\.\-\/\\]+/g, ' ');
-        t = t.replace(/\b[01]+(?=[A-Z])/g, '');
-        t = t.replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
+        t = t.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
+        t = t.replace(GARBAGE_REGEX, ' ').replace(/[\[\]\{\}（）【】]/g, ' ').replace(/[_\.\-\/\\]+/g, ' ');
+        t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
 
-        let queryCode = null;
-        let displayCode = null;
-
-        let fc2Match = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
-        if (fc2Match && fc2Match[1]) {
-            queryCode = "FC2-PPV-" + fc2Match[1];
+        let queryCode = null, displayCode = null;
+        const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
+        if (fc2m && fc2m[1]) {
+            queryCode = 'FC2-PPV-' + fc2m[1];
             displayCode = queryCode;
         } else {
-            let tokyoMatch = t.match(/\b([NHK][-_ ]?\d{4})\b/i);
-            if (tokyoMatch) {
-                queryCode = tokyoMatch[1].toUpperCase().replace(/[-_ ]/g, '');
-                displayCode = "TokyoHot-" + queryCode;
+            const tokyoM = t.match(/\b([NHK][-_ ]?\d{4})\b/i);
+            if (tokyoM) {
+                queryCode = tokyoM[1].toUpperCase().replace(/[-_ ]/g, '');
+                displayCode = 'TokyoHot-' + queryCode;
             } else {
-                let numMatch = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
-                if (numMatch) {
-                    queryCode = `${numMatch[1]}_${numMatch[2]}`;
-                    if (/1pon/i.test(rawNoExt)) displayCode = `1pondo-${numMatch[1]}-${numMatch[2]}`;
-                    else if (/carib/i.test(rawNoExt)) displayCode = `Caribbean-${numMatch[1]}-${numMatch[2]}`;
-                    else if (/paco/i.test(rawNoExt)) displayCode = `Pacopacomama-${numMatch[1]}-${numMatch[2]}`;
-                    else if (/heydouga/i.test(rawNoExt)) displayCode = `Heydouga-${numMatch[1]}-${numMatch[2]}`;
-                    else {
-                        queryCode = `${numMatch[1]}-${numMatch[2]}`;
-                        displayCode = queryCode;
-                    }
+                const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
+                if (numM) {
+                    queryCode = `${numM[1]}_${numM[2]}`;
+                    if (/1pon/i.test(rawNoExt)) displayCode = `1pondo-${numM[1]}-${numM[2]}`;
+                    else if (/carib/i.test(rawNoExt)) displayCode = `Caribbean-${numM[1]}-${numM[2]}`;
+                    else if (/paco/i.test(rawNoExt)) displayCode = `Pacopacomama-${numM[1]}-${numM[2]}`;
+                    else if (/heydouga/i.test(rawNoExt)) displayCode = `Heydouga-${numM[1]}-${numM[2]}`;
+                    else if (/tokyo/i.test(rawNoExt)) displayCode = `TokyoHot-${numM[1]}-${numM[2]}`;
+                    else { queryCode = `${numM[1]}-${numM[2]}`; displayCode = queryCode; }
                 } else {
-                    queryCode = matchCodeByPrefixLibrary(t);
-                    if (queryCode) {
-                        displayCode = queryCode;
-                    } else {
-                        const m = t.match(/\b([A-Z]{2,6})[-_ ]?0*(\d{2,5})\b/);
-                        if (m) {
-                            queryCode = `${m[1]}-${Number(m[2]).toString().padStart(3, '0')}`;
-                            displayCode = queryCode;
-                        }
+                    queryCode = matchCodeByPrefix(t);
+                    if (queryCode) displayCode = queryCode;
+                    else {
+                        const rm = t.match(/\b([A-Z]{2,6})[-_ ]?0*(\d{2,5})\b/);
+                        if (rm) { queryCode = `${rm[1]}-${Number(rm[2]).toString().padStart(3, '0')}`; displayCode = queryCode; }
                     }
                 }
             }
         }
-
         if (!queryCode) return null;
 
-        let safeBaseForRegex = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
-        if (raw.indexOf("中文") !== -1 || new RegExp(safeBaseForRegex + "[_-](UC|C)\\b", "i").test(raw)) {
+        const safeB = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
+        if (raw.indexOf("中文") !== -1 || new RegExp(safeB + "[_-](UC|C)\\b", "i").test(raw)) {
             if (!markers.includes('中文字幕')) markers.push('中文字幕');
         }
-        if (raw.indexOf("无码") !== -1 || new RegExp(safeBaseForRegex + "[_-](UC|U)\\b", "i").test(raw)) {
+        if (raw.indexOf("无码") !== -1 || new RegExp(safeB + "[_-](UC|U)\\b", "i").test(raw)) {
             if (!markers.includes('无码')) markers.push('无码');
         }
 
-        let part = "";
+        let part = '';
         let baseRegexStr;
         if (queryCode.startsWith('FC2-PPV-')) {
             baseRegexStr = '(?:\\b|\\d{0,3})(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]?0*' + queryCode.split('-')[2];
         } else if (displayCode.startsWith('TokyoHot-')) {
             baseRegexStr = '(?:\\b|\\d{0,3})(?:TOKYO[-_ ]*HOT[-_ ]*)?0*' + queryCode;
         } else if (displayCode.match(/^[a-zA-Z]+-\d{6}-\d{3}$/)) {
-            baseRegexStr = '(?:\\b|\\d{0,3})(?:1pondo|carib(?:bean)?|pacopacomama|heydouga)?[-_ ]*' + displayCode.split('-').slice(1).join('[-_ ]*0*');
+            baseRegexStr = '(?:\\b|\\d{0,3})(?:1pondo|carib(?:bean)?|pacopacomama|heydouga|tokyohot)?[-_ ]*' + displayCode.split('-').slice(1).join('[-_ ]*0*');
         } else {
-            let parts = queryCode.split(/[-_]/);
+            const parts = queryCode.split(/[-_]/);
             baseRegexStr = '(?:\\b|\\d{0,3})' + parts[0] + '[-_ ]?0*' + (parts[1] || '');
         }
-
-        let suffixPattern = '(?:[-_\\s]+([a-zA-Z]{1,2}|\\d{1,3})|\\s*(?:part|pt|cd|ep|sp|disc)\\s*([a-zA-Z]{1,2}|\\d{1,3})|\\s*[\\(\\[]([a-zA-Z]{1,2}|\\d{1,3})[\\)\\]])(?=\\s|$|\\.|-|_|【)';
-        let partRegex = new RegExp(baseRegexStr + suffixPattern, 'i');
-        let pMatch = rawNoExt.match(partRegex);
-        if (pMatch) {
-            part = (pMatch[1] || pMatch[2] || pMatch[3]).toUpperCase();
-        }
-
-        let fullCode = part ? `${displayCode}-${part}` : displayCode;
+        const pRegex = new RegExp(baseRegexStr + '(?:[-_\\s.]*(?:part|pt|cd|ep|sp|disc)[-_.\\s]*([a-zA-Z]{1,2}|\\d{1,3})|[-_\\s]+([a-zA-Z]{1,2}|\\d{1,3})|\\s*[\\(\\[\\{]([a-zA-Z]{1,2}|\\d{1,3})[\\)\\]\\}]|\\s*\\.\\s*([a-zA-Z]{1,2}|\\d{1,3}))(?=\\s|$|\\.|-|_|【)', 'i');
+        const pm = rawNoExt.match(pRegex);
+        if (pm) part = (pm[1] || pm[2] || pm[3] || pm[4]).toUpperCase();
+        const fullCode = part ? `${displayCode}-${part}` : displayCode;
 
         let localTitle = rawNoExt.replace(MARKER_REGEX, ' ');
-        localTitle = localTitle.replace(/(?:\b|_|^|@|】|\]|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/ig, ' ');
+        localTitle = localTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/ig, ' ');
+        const se = pm ? pm[0].replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') : baseRegexStr;
+        const codeClean = new RegExp('(?:\\b|^|_|-)\\d{0,3}' + se + '(?:[-_ \\]\\[(){}]*(?:part|pt|cd|ep|sp|disc)?[-_ .]?[A-D0-9]{1,2}[\\]\\[(){}]?)?(?=\\b|_|$|\\.)', 'gi');
+        localTitle = localTitle.replace(codeClean, ' ').replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
+        localTitle = localTitle.replace(GARBAGE_REGEX, ' ').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-        let safeBaseExtracted = pMatch ? pMatch[0].replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') : baseRegexStr;
-        let codeCleanupRegex = new RegExp('(?:\\b|^|_|-)\\d{0,3}' + safeBaseExtracted + '(?:[-_ \\(\\[]*(?:part|pt|cd|ep|sp|disc)?[-_ ]?[A-D0-9]{1,2}[\\)\\]]?)?(?=\\b|_|$|\\.)', 'gi');
-        localTitle = localTitle.replace(codeCleanupRegex, ' ');
+        return { queryCode, baseCode: displayCode, fullCode, markers, date: dateStr, localTitle };
+    };
 
-        localTitle = localTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
-        localTitle = localTitle.replace(GARBAGE_REGEX, ' ');
-        localTitle = localTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-
-        return {
-            queryCode: queryCode,
-            baseCode: displayCode,
-            fullCode: fullCode,
-            markers: markers,
-            date: dateStr,
-            localTitle: localTitle
-        };
-    }
-
-    // ==========================================
-    // 模块三：本地改名与网络改名处理函数
-    // ==========================================
-    function local_rename(fid, vInfo, suffix, addDate, callback) {
-        let newName = buildNewNameUnified(vInfo, vInfo.localTitle, [], vInfo.date, suffix);
-        send_115(fid, newName, vInfo.fullCode, callback);
-    }
-
-    function buildNewNameUnified(vInfo, title, actresses, dateStr, suffix) {
-        let name = String(vInfo.fullCode).trim();
-        if (title) name += ' ' + String(title).trim();
-        if (actresses && actresses.length > 0) name += ' ' + actresses.join('・');
-        if (vInfo.markers && vInfo.markers.length > 0) {
-            let uniqueM = [...new Set(vInfo.markers)].filter(m => m && m.trim() !== '');
-            if (uniqueM.length > 0) {
-                name += ' ' + uniqueM.map(m => `【${m}】`).join('');
-            }
+    // ========== 构建新名称 & 发送 ==========
+    const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
+        let name = vInfo.fullCode;
+        if (title) name += ' ' + title.trim();
+        if (actresses && actresses.length) name += ' ' + actresses.join('・');
+        if (vInfo.markers && vInfo.markers.length) {
+            const uniq = [...new Set(vInfo.markers)].filter(Boolean);
+            if (uniq.length) name += ' ' + uniq.map(m => `【${m}】`).join('');
         }
         if (dateStr) name += '_' + dateStr;
         if (suffix) name += suffix;
-        return stringStandard(name);
-    }
+        return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
+    };
 
-    function send_115(id, name, fh, callback) {
-        let file_name = stringStandard(name);
-        $.post("https://webapi.115.com/files/edit", { fid: id, file_name: file_name }, function (data) {
-            let result = JSON.parse(data);
-            if (!result.state) {
-                showPageNotification(`${fh} 修改失败: ${result.error}`, 'error', 3000);
-                if (typeof callback === 'function') callback(); // 失败也要继续流程
-            } else {
-                showPageNotification(`${fh} 修改成功`, 'success', 2000);
-                if (typeof callback === 'function') callback();
-            }
-        }).fail(function () {
-            showPageNotification(`${fh} 请求失败`, 'error', 3000);
+    const send_115 = (id, name, fh, callback) => {
+        const fn = name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
+        $.post("https://webapi.115.com/files/edit", { fid: id, file_name: fn }, data => {
+            const r = JSON.parse(data);
+            if (!r.state) showPageNotification(`${fh} 修改失败: ${r.error}`, 'error', 3000);
+            else showPageNotification(`${fh} 修改成功`, 'success', 2000);
             if (typeof callback === 'function') callback();
-        });
-    }
+        }).fail(() => { showPageNotification(`${fh} 请求失败`, 'error', 3000); if (typeof callback === 'function') callback(); });
+    };
 
-    function stringStandard(name) {
-        return name.replace(/\\/g, "").replace(/\//g, " ").replace(/:/g, " ")
-            .replace(/\?/g, " ").replace(/"/g, " ").replace(/</g, " ")
-            .replace(/>/g, " ").replace(/\|/g, "").replace(/\*/g, " ");
-    }
-
-    // ==========================================
-    // 模块四：多站刮削函数 (移植自115重命名.txt，适配vInfo)
-    // ==========================================
-    function normalizeDate(str) {
-        if (!str) return '';
-        str = str.trim();
-        let m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    // ========== 多站刮削 ==========
+    const normDate = d => {
+        if (!d) return '';
+        const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
         if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
-        m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-        if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-        return str;
-    }
+        const m2 = d.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (m2) return `${m2[3]}-${m2[2]}-${m2[1]}`;
+        return d;
+    };
 
-    function fetchFromJavlibraryByCode(code, onOk, onFail) {
-        const searchUrl = javlibSearchBase + encodeURIComponent(code);
+    const fetchJavlib = (code, ok, fail) => {
         GM_xmlhttpRequest({
-            method: "GET", url: searchUrl,
-            onload: xhr => {
+            method: "GET", url: javlibSearchBase + encodeURIComponent(code),
+            onload: x => {
                 try {
-                    const $search = $(xhr.responseText);
-                    let firstLink = $search.find("#video_title a").attr("href")
-                        || $search.find("div.video a[href*='?v=']").first().attr("href");
-                    if (!firstLink) return onFail && onFail("JavLibrary 搜索无结果");
-                    if (firstLink.startsWith("/")) firstLink = javlibBase.replace(/\/+$/, '') + firstLink;
+                    const $s = $(x.responseText);
+                    let link = $s.find("#video_title a").attr("href") || $s.find("div.video a[href*='?v=']").first().attr("href");
+                    if (!link) return fail && fail("JavLibrary 搜索无结果");
+                    if (link.startsWith('/')) link = javlibBase.replace(/\/+$/, '') + link;
                     GM_xmlhttpRequest({
-                        method: "GET", url: firstLink,
-                        onload: dX => {
+                        method: "GET", url: link,
+                        onload: xx => {
                             try {
-                                const $detail = $(dX.responseText);
-                                let fullTitle = $detail.find("#video_title a").first().text().trim()
-                                    || $detail.find("#video_title").text().trim();
-                                let title = fullTitle;
-                                if (title.toUpperCase().indexOf(code.toUpperCase()) === 0) {
-                                    title = title.substring(code.length).trim();
-                                }
-                                let dateText = $detail.find("#video_date td.text").text().trim();
-                                let isoDate = normalizeDate(dateText);
+                                const $d = $(xx.responseText);
+                                let ttl = $d.find("#video_title a").first().text().trim() || $d.find("#video_title").text().trim();
+                                if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
+                                const dateText = $d.find("#video_date td.text").text().trim();
+                                const isoDate = normDate(dateText);
                                 const actresses = [];
-                                $detail.find("#video_cast td.text a").each(function () {
-                                    const n = $(this).text().trim();
-                                    if (n) actresses.push(n);
-                                });
-                                if (!title) return onFail && onFail("JavLibrary 无标题");
-                                const info = { title, date: isoDate, actresses };
-                                const key = code.toUpperCase();
-                                infoCache[key] = info;
-                                onOk && onOk(info);
-                            } catch (e) { onFail && onFail("JavLibrary 详情解析失败: " + e.message); }
+                                $d.find("#video_cast td.text a").each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                                if (!ttl) return fail && fail("JavLibrary 无标题");
+                                const info = { title: ttl, date: isoDate, actresses };
+                                infoCache[code.toUpperCase()] = info;
+                                ok && ok(info);
+                            } catch (e) { fail && fail("JavLibrary 解析失败: " + e.message); }
                         },
-                        onerror: () => onFail && onFail("JavLibrary 详情页请求失败")
+                        onerror: () => fail && fail("JavLibrary 详情页请求失败")
                     });
-                } catch (e) { onFail && onFail("JavLibrary 搜索解析失败: " + e.message); }
+                } catch (e) { fail && fail("JavLibrary 搜索解析失败: " + e.message); }
             },
-            onerror: () => onFail && onFail("JavLibrary 搜索请求失败")
+            onerror: () => fail && fail("JavLibrary 搜索请求失败")
         });
-    }
+    };
 
-    function fetchFromJavbusByCode(code, onOk, onFail) {
+    const fetchJavbus = (code, ok, fail) => {
         const tryUrl = u => {
             GM_xmlhttpRequest({
                 method: "GET", url: u + code,
-                onload: xhr => {
+                onload: x => {
                     try {
-                        const $res = $(xhr.responseText);
-                        let title = null;
-                        let h3 = $res.find("h3");
-                        if (h3.length) {
-                            title = h3.text().trim();
-                            if (title.toUpperCase().indexOf(code.toUpperCase()) === 0) {
-                                title = title.substring(code.length).trim();
-                            }
+                        const $r = $(x.responseText);
+                        let ttl = null;
+                        const h3 = $r.find("h3");
+                        if (h3.length) { ttl = h3.text().trim(); if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim(); }
+                        if (!ttl) ttl = $r.find("div.photo-frame img").attr("title");
+                        if (!ttl) {
+                            ttl = $r.find("title").text().trim();
+                            if (ttl.includes(" - JavBus")) ttl = ttl.split(" - JavBus")[0].trim();
+                            if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
                         }
-                        if (!title) title = $res.find("div.photo-frame img").attr("title");
-                        if (!title) {
-                            title = $res.find("title").text().trim();
-                            if (title.indexOf(" - JavBus") > 0) {
-                                title = title.substring(0, title.indexOf(" - JavBus")).trim();
-                            }
-                            if (title.toUpperCase().indexOf(code.toUpperCase()) === 0) {
-                                title = title.substring(code.length).trim();
-                            }
-                        }
-                        let isoDate = "";
-                        $res.find("p").each(function () {
-                            const t = $(this).text().trim();
-                            if (/發行日期|发行日期/.test(t)) {
-                                const m = t.match(/(\d{4}-\d{2}-\d{2})/);
-                                if (m) isoDate = normalizeDate(m[1]);
-                            }
-                        });
+                        let isoDate = '';
+                        $r.find("p").each(function () { const t = $(this).text().trim(); if (/發行日期|发行日期/.test(t)) { const m = t.match(/(\d{4}-\d{2}-\d{2})/); if (m) isoDate = normDate(m[1]); } });
                         if (!isoDate) {
-                            const p = $res.find(".info p:contains('發行日期'), .info p:contains('发行日期')");
-                            if (p.length) {
-                                const t = p.text().replace(/.*?[:：]/, '').trim();
-                                isoDate = normalizeDate(t);
-                            }
+                            const p = $r.find(".info p:contains('發行日期'), .info p:contains('发行日期')");
+                            if (p.length) isoDate = normDate(p.text().replace(/.*?[:：]/, '').trim());
                         }
                         const actresses = [];
-                        $res.find("span.genre a[href*='/star/']").each(function () {
-                            const n = $(this).text().trim();
-                            if (n) actresses.push(n);
-                        });
-                        if (!title) {
+                        $r.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                        if (!ttl) {
                             if (u !== javbusUncensoredBase) return tryUrl(javbusUncensoredBase);
-                            return onFail && onFail("JavBus 无标题");
+                            return fail && fail("JavBus 无标题");
                         }
-                        const info = { title, date: isoDate, actresses };
-                        const key = code.toUpperCase();
-                        infoCache[key] = info;
-                        onOk && onOk(info);
-                    } catch (e) {
-                        onFail && onFail("JavBus 解析失败: " + e.message);
-                    }
+                        const info = { title: ttl, date: isoDate, actresses };
+                        infoCache[code.toUpperCase()] = info;
+                        ok && ok(info);
+                    } catch (e) { fail && fail("JavBus 解析失败: " + e.message); }
                 },
                 onerror: () => {
                     if (u !== javbusUncensoredBase) return tryUrl(javbusUncensoredBase);
-                    onFail && onFail("JavBus 请求失败");
+                    fail && fail("JavBus 请求失败");
                 }
             });
         };
         tryUrl(javbusDirectAccess);
-    }
+    };
 
-    function parseXslistModelPageForCode($page, code, onOk, onFail) {
-        const upperCode = String(code).toUpperCase();
-        let hitRow = null;
-        $page.find("#movices tbody tr").each(function () {
-            const $tr = $(this);
-            const c = ($tr.find("td").eq(0).find("strong").text() || "").trim().toUpperCase();
-            if (c === upperCode) { hitRow = $tr; return false; }
-        });
-        if (!hitRow) return onFail && onFail("xslist 模型页未列出该番号");
-        const $tds = hitRow.find("td");
-        const title = $tds.eq(1).text().trim();
-        const dateText = $tds.eq(2).text().trim();
-        let isoDate = '';
-        if (dateText && !/n\/a/i.test(dateText)) isoDate = normalizeDate(dateText);
-        let actressName = $page.find("h1 span[itemprop='name']").first().text().trim();
-        const actresses = actressName ? [actressName] : [];
-        if (!title) return onFail && onFail("xslist 无标题");
-        const info = { title, date: isoDate, actresses };
-        const key = code.toUpperCase();
-        infoCache[key] = info;
-        onOk && onOk(info);
-    }
-
-    function fetchFromXslistByCode(code, onOk, onFail) {
-        const searchUrl = xslistBase + "search?query=" + encodeURIComponent(code);
+    const fetchXslist = (code, ok, fail) => {
+        const parsePage = ($pg, cbOk, cbFail) => {
+            const uc = code.toUpperCase();
+            let tr = null;
+            $pg.find("#movices tbody tr").each(function () {
+                const c = ($(this).find("td").eq(0).find("strong").text() || '').trim().toUpperCase();
+                if (c === uc) { tr = $(this); return false; }
+            });
+            if (!tr) return cbFail && cbFail("xslist 模型页未列出该番号");
+            const $tds = tr.find("td");
+            const ttl = $tds.eq(1).text().trim();
+            const dt = $tds.eq(2).text().trim();
+            let isoDate = '';
+            if (dt && !/n\/a/i.test(dt)) isoDate = normDate(dt);
+            const aname = $pg.find("h1 span[itemprop='name']").first().text().trim();
+            const actresses = aname ? [aname] : [];
+            if (!ttl) return cbFail && cbFail("xslist 无标题");
+            const info = { title: ttl, date: isoDate, actresses };
+            infoCache[code.toUpperCase()] = info;
+            cbOk && cbOk(info);
+        };
         GM_xmlhttpRequest({
-            method: "GET", url: searchUrl,
-            onload: xhr => {
+            method: "GET", url: xslistBase + "search?query=" + encodeURIComponent(code),
+            onload: x => {
                 try {
-                    const $search = $(xhr.responseText);
-                    if ($search.find("#movices").length) {
-                        return parseXslistModelPageForCode($search, code, onOk, onFail);
+                    const $s = $(x.responseText);
+                    if ($s.find("#movices").length && $s.find("h1 span[itemprop='name']").length) {
+                        return parsePage($s, ok, fail);
                     }
-                    let firstLink = $search.find("a[href*='/model/']").first().attr("href");
-                    if (!firstLink) return onFail && onFail("xslist 搜索无结果");
-                    if (firstLink.startsWith("/")) firstLink = xslistBase.replace(/\/+$/, "") + firstLink;
+                    let link = $s.find("a[href*='/model/']").first().attr("href");
+                    if (!link) return fail && fail("xslist 搜索无结果");
+                    if (link.startsWith('/')) link = xslistBase.replace(/\/+$/, '') + link;
                     GM_xmlhttpRequest({
-                        method: "GET", url: firstLink,
+                        method: "GET", url: link,
+                        onload: dx => { try { parsePage($(dx.responseText), ok, fail); } catch (e) { fail && fail("xslist 详情解析失败: " + e.message); } },
+                        onerror: () => fail && fail("xslist 详情页请求失败")
+                    });
+                } catch (e) { fail && fail("xslist 搜索解析失败: " + e.message); }
+            },
+            onerror: () => fail && fail("xslist 搜索请求失败")
+        });
+    };
+
+    const fetchJavdb = (code, ok, fail) => {
+        GM_xmlhttpRequest({
+            method: "GET", url: `${javdbSearchBase}${encodeURIComponent(code)}&f=all`,
+            onload: x => {
+                try {
+                    const $h = $(x.responseText);
+                    let link = $h.find('a[href*="/v/"]').first().attr('href') || $h.find('.movie-list .item a').first().attr('href');
+                    if (!link) return fail && fail("JavDB 搜索无结果");
+                    if (link.startsWith('/')) link = javdbBase + link;
+                    GM_xmlhttpRequest({
+                        method: "GET", url: link,
                         onload: dx => {
                             try {
-                                const $detail = $(dx.responseText);
-                                parseXslistModelPageForCode($detail, code, onOk, onFail);
-                            } catch (e) { onFail && onFail("xslist 详情解析失败: " + e.message); }
+                                const $d = $(dx.responseText);
+                                let ttl = $d.find('h2.title').text().trim() || $d.find('strong.current-title').text().trim();
+                                if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
+                                let dateText = '';
+                                $d.find('.panel-block').each(function () {
+                                    const t = $(this).text().trim();
+                                    if (/日期:|發行日期:|发行日期:/.test(t)) { dateText = t.replace(/.*?[:：]/, '').trim(); return false; }
+                                });
+                                const isoDate = normDate(dateText);
+                                const actresses = [];
+                                $d.find('a[href*="/actors/"]').each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                                if (!ttl) return fail && fail("JavDB 无标题");
+                                const info = { title: ttl, date: isoDate, actresses };
+                                infoCache[code.toUpperCase()] = info;
+                                ok && ok(info);
+                            } catch (e) { fail && fail("JavDB 详情解析失败: " + e.message); }
                         },
-                        onerror: () => onFail && onFail("xslist 详情页请求失败")
+                        onerror: () => fail && fail("JavDB 详情页请求失败")
                     });
-                } catch (e) { onFail && onFail("xslist 搜索解析失败: " + e.message); }
+                } catch (e) { fail && fail("JavDB 搜索解析失败: " + e.message); }
             },
-            onerror: () => onFail && onFail("xslist 搜索请求失败")
+            onerror: () => fail && fail("JavDB 搜索请求失败")
         });
-    }
+    };
 
-    // ==========================================
-    // 模块五：改名主流程 (多站轮询+缓存+并发)
-    // ==========================================
-    window.rename_multi = function (fid, vInfo, suffix, addDate, callback) {
+    // ========== 改名主流程 ==========
+    window.rename_multi = (fid, vInfo, suffix, addDate, callback) => {
         const code = vInfo.queryCode;
-        const key = code.toUpperCase();
-
-        // FC2 仍然仅本地处理，不进行网络刮削
         if (/^FC2-PPV-\d{5,7}$/i.test(code)) {
-            showPageNotification(`FC2 番号不支持网站在线信息，使用本地改名`, 'info', 2500);
+            showPageNotification('FC2 番号不支持在线信息，使用本地改名', 'info', 2500);
             local_rename(fid, vInfo, suffix, addDate, callback);
             return;
         }
-
-        // 1. 检查缓存
+        const key = code.toUpperCase();
         if (infoCache[key]) {
             const info = infoCache[key];
-            let title = info.title || '';
-            let date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
-            let newName = buildNewNameUnified(vInfo, title, info.actresses, date, suffix);
-            send_115(fid, newName, vInfo.fullCode, callback);
+            const title = info.title || '';
+            const date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
+            send_115(fid, buildNewName(vInfo, title, info.actresses, date, suffix), vInfo.fullCode, callback);
             return;
         }
-
-        // 2. 多站轮询：JavLibrary → JavBus → xslist
-        fetchFromJavlibraryByCode(code, (info) => {
-            let title = info.title || '';
-            let date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
-            let newName = buildNewNameUnified(vInfo, title, info.actresses, date, suffix);
-            send_115(fid, newName, vInfo.fullCode, callback);
-        }, () => {
-            fetchFromJavbusByCode(code, (info) => {
-                let title = info.title || '';
-                let date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
-                let newName = buildNewNameUnified(vInfo, title, info.actresses, date, suffix);
-                send_115(fid, newName, vInfo.fullCode, callback);
-            }, () => {
-                fetchFromXslistByCode(code, (info) => {
-                    let title = info.title || '';
-                    let date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
-                    let newName = buildNewNameUnified(vInfo, title, info.actresses, date, suffix);
-                    send_115(fid, newName, vInfo.fullCode, callback);
-                }, () => {
-                    showPageNotification(`所有信息源均未找到 ${code} 的信息`, 'error', 4000);
-                    if (typeof callback === 'function') callback();
+        const apply = info => {
+            const title = info.title || '';
+            const date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
+            send_115(fid, buildNewName(vInfo, title, info.actresses, date, suffix), vInfo.fullCode, callback);
+        };
+        fetchJavlib(code, apply, () => {
+            fetchJavbus(code, apply, () => {
+                fetchXslist(code, apply, () => {
+                    fetchJavdb(code, apply, () => {
+                        showPageNotification(`所有信息源未找到 ${code}`, 'error', 4000);
+                        if (typeof callback === 'function') callback();
+                    });
                 });
             });
         });
     };
 
-    // ==========================================
-    // 模块六：并发改名入口 (重写 rename 函数)
-    // ==========================================
-    function rename(call, addDate) {
-        let $items = $("iframe[rel='wangpan']").contents().find("li.selected");
-        let selectedCount = $items.length;
-        if (selectedCount === 0) {
-            showPageNotification("请先选择要处理的文件或文件夹", 'info', 3000);
+    const local_rename = (fid, vInfo, suffix, addDate, callback) => {
+        send_115(fid, buildNewName(vInfo, vInfo.localTitle, [], vInfo.date, suffix), vInfo.fullCode, callback);
+    };
+
+    // ========== 批量处理 ==========
+    const rename = (call, addDate) => {
+        const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
+        const cnt = $items.length;
+        if (!cnt) { showPageNotification("请先选择文件或文件夹", 'info', 3000); return; }
+        const isLocal = (call === local_rename);
+        progressBox.init(isLocal ? '本地番号加工' : '联网改名', cnt);
+        showPageNotification(`开始处理 ${cnt} 个文件...`, 'info', 3000);
+
+        const tasks = [];
+        $items.each(function () {
+            const $it = $(this);
+            const fn = $it.attr("title");
+            const ft = $it.attr("file_type");
+            let fid, suffix = '';
+            if (ft === "0") fid = $it.attr("cate_id");
+            else {
+                fid = $it.attr("file_id");
+                const idx = fn.lastIndexOf('.');
+                if (idx !== -1) suffix = fn.substring(idx);
+            }
+            if (!fid || !fn) return;
+            const vi = parseVideoInfo(fn);
+            if (!vi) return;
+            tasks.push((done) => { call(fid, vi, suffix, addDate, done); });
+        });
+
+        const concurrency = isLocal ? 5 : 3;
+        let processed = 0;
+        const wrapped = tasks.map(t => done => t(() => { processed++; progressBox.update(processed); done(); }));
+        runTasksWithLimit(wrapped, concurrency, () => {
+            progressBox.finish();
+            showPageNotification(`所有文件处理完成`, 'success', 5000);
+        });
+    };
+
+    // ========== 归档功能 ==========
+    const getSeriesFromCode = code => {
+        const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
+        if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
+        const m = c.match(/^([A-Z]+)-\d+/);
+        return m ? m[1] : null;
+    };
+
+    const findOrCreateFolderAndMove = (fid, folderName, successCallback, failCallback) => {
+        const cid = archiveRootCid || ROOT_DIR_CID;
+        const cleanName = folderName.replace(/[\\/:*?"<>|]/g, ' '); // 简单净化
+        if (folderCidCache[cleanName]) {
+            moveFileToFolder(fid, folderCidCache[cleanName], cleanName, successCallback, failCallback);
             return;
         }
-
-        const isLocal = (call === local_rename);
-        progressBox.init(isLocal ? '本地番号加工进度' : '联网改名进度', selectedCount);
-        showPageNotification(`开始处理 ${selectedCount} 个文件...`, 'info', 3000);
-
-        const items = $items.toArray();
-        const tasks = [];
-
-        items.forEach(li => {
-            const $item = $(li);
-            const file_name = $item.attr("title");
-            const file_type = $item.attr("file_type");
-            let fid, suffix = "";
-            if (file_type === "0") {
-                fid = $item.attr("cate_id");
-            } else {
-                fid = $item.attr("file_id");
-                let lastIndexOf = file_name.lastIndexOf('.');
-                if (lastIndexOf !== -1) suffix = file_name.substr(lastIndexOf);
+        $.get("https://webapi.115.com/files/search", {
+            search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000
+        }, data => {
+            const result = typeof data === 'string' ? JSON.parse(data) : data;
+            if (result.state && result.data && result.data.count > 0) {
+                const found = result.data.list.find(item => item.name === cleanName && item.file_type === "0");
+                if (found) {
+                    folderCidCache[cleanName] = found.cid;
+                    moveFileToFolder(fid, found.cid, cleanName, successCallback, failCallback);
+                    return;
+                }
             }
-            if (!fid || !file_name) return;
-            let vInfo = parseVideoInfo(file_name);
-            if (!vInfo) return;
+            // 创建文件夹
+            $.post("https://webapi.115.com/files/add", { pid: cid, cname: cleanName }, createData => {
+                const createResult = typeof createData === 'string' ? JSON.parse(createData) : createData;
+                if (createResult.state) {
+                    folderCidCache[cleanName] = createResult.cid;
+                    moveFileToFolder(fid, createResult.cid, cleanName, successCallback, failCallback);
+                } else {
+                    if (createResult.errno === 20004) {
+                        // 重名，再次搜索
+                        $.get("https://webapi.115.com/files/search", { search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000 }, data2 => {
+                            const res2 = JSON.parse(data2);
+                            const found2 = res2.data && res2.data.list.find(item => item.name === cleanName && item.file_type === "0");
+                            if (found2) {
+                                folderCidCache[cleanName] = found2.cid;
+                                moveFileToFolder(fid, found2.cid, cleanName, successCallback, failCallback);
+                            } else {
+                                showPageNotification(`创建文件夹失败，且未找到同名文件夹`, 'error', 3000);
+                                if (typeof failCallback === 'function') failCallback('重名冲突');
+                            }
+                        });
+                    } else {
+                        showPageNotification(`创建文件夹失败: ${createResult.error || '未知错误'}`, 'error', 3000);
+                        if (typeof failCallback === 'function') failCallback(createResult.error);
+                    }
+                }
+            }).fail(() => {
+                showPageNotification('创建文件夹请求失败', 'error', 3000);
+                if (typeof failCallback === 'function') failCallback('网络错误');
+            });
+        }).fail(() => {
+            showPageNotification('搜索文件夹请求失败', 'error', 3000);
+            if (typeof failCallback === 'function') failCallback('网络错误');
+        });
+    };
 
-            tasks.push((done) => {
-                call(fid, vInfo, suffix, addDate, () => {
+    const moveFileToFolder = (fid, targetCid, folderName, successCallback, failCallback) => {
+        $.post("https://webapi.115.com/files/move", { pid: targetCid, fid: fid }, data => {
+            const result = typeof data === 'string' ? JSON.parse(data) : data;
+            if (result.state) {
+                showPageNotification(`已归档到 ${folderName}`, 'success', 2000);
+                if (typeof successCallback === 'function') successCallback();
+            } else {
+                const errorMsg = result.error || '未知错误';
+                if (errorMsg.includes('尚未完成') || errorMsg.includes('请稍后再试')) {
+                    showPageNotification(`归档到 ${folderName} 暂时失败，请稍后重试`, 'error', 5000);
+                } else {
+                    showPageNotification(`归档到 ${folderName} 失败: ${errorMsg}`, 'error', 5000);
+                }
+                if (typeof failCallback === 'function') failCallback(errorMsg);
+            }
+        }).fail(err => {
+            showPageNotification(`移动文件请求失败: ${err.statusText || '网络错误'}`, 'error', 5000);
+            if (typeof failCallback === 'function') failCallback(err.statusText);
+        });
+    };
+
+    const requestActressForArchive = (fid, code, seriesName, archiveMode, doneCallback) => {
+        const key = code.toUpperCase();
+        if (actressCache[key] && actressCache[key].length) {
+            const folderName = (archiveMode === "2" && seriesName) ? `${actressCache[key][0]} - ${seriesName}` : actressCache[key][0];
+            findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
+            return;
+        }
+        // 尝试从缓存或在线查询（只查JavBus，简化）
+        const url = javbusDirectAccess + code;
+        GM_xmlhttpRequest({
+            method: "GET", url: url,
+            onload: xhr => {
+                const $r = $(xhr.responseText);
+                const actresses = [];
+                $r.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                if (actresses.length) {
+                    actressCache[key] = actresses;
+                    const folderName = (archiveMode === "2" && seriesName) ? `${actresses[0]} - ${seriesName}` : actresses[0];
+                    findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
+                } else {
+                    // 尝试无码站
+                    GM_xmlhttpRequest({
+                        method: "GET", url: javbusUncensoredBase + code,
+                        onload: xhr2 => {
+                            const $r2 = $(xhr2.responseText);
+                            const actresses2 = [];
+                            $r2.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses2.push(n); });
+                            if (actresses2.length) {
+                                actressCache[key] = actresses2;
+                                const folderName = (archiveMode === "2" && seriesName) ? `${actresses2[0]} - ${seriesName}` : actresses2[0];
+                                findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
+                            } else {
+                                showPageNotification(`未找到 ${code} 的演员信息`, 'error', 3000);
+                                doneCallback();
+                            }
+                        },
+                        onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
+                    });
+                }
+            },
+            onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
+        });
+    };
+
+    const archiveToActorFolder = () => {
+        const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
+        const cnt = $items.length;
+        if (!cnt) { showPageNotification("请先选择文件或文件夹", 'info', 3000); return; }
+        if (!archiveRootCid) {
+            showPageNotification("请先设置归档根目录（右键文件夹 → 设为归档根目录）", 'error', 5000);
+            return;
+        }
+        const mode = prompt("选择归档方式：\n1 - 按女优\n2 - 按番号系列\n3 - 按女优+系列");
+        if (!mode || !['1', '2', '3'].includes(mode)) { showPageNotification("无效选择", 'error', 3000); return; }
+        progressBox.init('归档', cnt);
+        showPageNotification(`开始归档 ${cnt} 个项目...`, 'info', 3000);
+        let processed = 0, success = 0;
+
+        const tasks = [];
+        $items.each(function () {
+            const $it = $(this);
+            const fn = $it.attr("title");
+            const ft = $it.attr("file_type");
+            let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
+            if (!fid || !fn) return;
+            const vi = parseVideoInfo(fn);
+            if (!vi) { processed++; progressBox.update(processed); return; }
+            const series = getSeriesFromCode(vi);
+            if ((mode === "2" || mode === "3") && !series) {
+                showPageNotification(`无法识别 ${vi.queryCode} 的系列，跳过`, 'error', 2500);
+                processed++; progressBox.update(processed);
+                return;
+            }
+            tasks.push(done => {
+                if (mode === "1") {
+                    requestActressForArchive(fid, vi.queryCode, null, "1", () => { processed++; success++; progressBox.update(processed); done(); });
+                } else if (mode === "2") {
+                    findOrCreateFolderAndMove(fid, series, () => { processed++; success++; progressBox.update(processed); done(); }, () => { processed++; progressBox.update(processed); done(); });
+                } else if (mode === "3") {
+                    requestActressForArchive(fid, vi.queryCode, series, "2", () => { processed++; success++; progressBox.update(processed); done(); });
+                } else {
+                    processed++; progressBox.update(processed); done();
+                }
+            });
+        });
+
+        runTasksWithLimit(tasks, 3, () => {
+            progressBox.finish();
+            showPageNotification(`归档完成：成功 ${success}/${cnt}`, 'success', 5000);
+        });
+    };
+
+    // ========== JavDB 评分 ==========
+    const getJavdbRating = () => {
+        const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
+        const cnt = $items.length;
+        if (!cnt) { showPageNotification("请先选择文件或文件夹", 'info', 3000); return; }
+        progressBox.init('获取评分', cnt);
+        showPageNotification(`开始获取 ${cnt} 个项目的评分...`, 'info', 3000);
+        let processed = 0, success = 0;
+        const tasks = [];
+        $items.each(function () {
+            const $it = $(this);
+            const fn = $it.attr("title");
+            const ft = $it.attr("file_type");
+            let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
+            if (!fid || !fn) return;
+            const vi = parseVideoInfo(fn);
+            if (!vi || !vi.queryCode) return;
+            tasks.push(done => {
+                requestJavdbRating(fid, vi.queryCode, fn, ok => {
+                    processed++; if (ok) success++;
+                    progressBox.update(processed);
                     done();
                 });
             });
         });
-
-        const CONCURRENCY = isLocal ? 5 : 3;
-        let processedCount = 0;
-        const wrappedTasks = tasks.map(task => {
-            return (done) => {
-                task(() => {
-                    processedCount++;
-                    progressBox.update(processedCount);
-                    done();
-                });
-            };
-        });
-
-        runTasksWithLimit(wrappedTasks, CONCURRENCY, () => {
+        runTasksWithLimit(tasks, 2, () => {
             progressBox.finish();
-            showPageNotification(`所有文件处理完成`, 'success', 5000);
+            showPageNotification(`评分获取完成：成功 ${success}/${cnt}`, 'success', 5000);
         });
-    }
+    };
 
-    // ========== 菜单事件绑定 ==========
+    const requestJavdbRating = (fid, fh, fname, callback) => {
+        GM_xmlhttpRequest({
+            method: "GET", url: `${javdbSearchBase}${encodeURIComponent(fh)}&f=all`, timeout: 10000,
+            onload: xhr => {
+                if (xhr.status !== 200) { callback(false); return; }
+                try {
+                    const doc = new DOMParser().parseFromString(xhr.responseText, "text/html");
+                    const item = doc.querySelector('.movie-list .item');
+                    if (item) {
+                        let rating = parseFloat(item.getAttribute('score'));
+                        if (isNaN(rating)) {
+                            const rel = item.querySelector('.score .value');
+                            if (rel) {
+                                const m = rel.textContent.trim().match(/(\d+\.\d+)分/);
+                                if (m) rating = parseFloat(m[1]);
+                            }
+                        }
+                        if (!isNaN(rating)) { update115Rating(fid, Math.round(rating), fh, fname, callback); return; }
+                        const link = item.querySelector('a.box');
+                        if (link) {
+                            const href = link.getAttribute('href');
+                            if (href) {
+                                const detailUrl = javdbBase + (href.startsWith('/') ? href : '/' + href);
+                                GM_xmlhttpRequest({
+                                    method: "GET", url: detailUrl, timeout: 10000,
+                                    onload: dx => {
+                                        try {
+                                            const dd = new DOMParser().parseFromString(dx.responseText, "text/html");
+                                            const rEl = dd.querySelector('.panel-block .value');
+                                            if (rEl) {
+                                                const rating = parseFloat(rEl.textContent.trim().match(/(\d+\.\d+)/)?.[1]);
+                                                if (!isNaN(rating)) { update115Rating(fid, Math.round(rating), fh, fname, callback); return; }
+                                            }
+                                            callback(false);
+                                        } catch (e) { callback(false); }
+                                    },
+                                    onerror: () => callback(false),
+                                    ontimeout: () => callback(false)
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    callback(false);
+                } catch (e) { callback(false); }
+            },
+            onerror: () => callback(false),
+            ontimeout: () => callback(false)
+        });
+    };
+
+    const update115Rating = (fid, star, fh, fname, callback) => {
+        star = Math.max(1, Math.min(5, star));
+        const finish = (ok) => { showPageNotification(`"${fh}"评分${ok ? `更新为 ${star} 星` : '更新失败'}`, ok ? 'success' : 'error', 2000); callback(ok); };
+        $.ajax({
+            url: "https://webapi.115.com/files/score", type: "POST", data: { file_id: fid, score: star }, dataType: "json",
+            success: r => { if (r && r.state) finish(true); else backupScore(); },
+            error: backupScore
+        });
+        function backupScore() {
+            $.ajax({
+                url: "https://webapi.115.com/files/edit_property", type: "POST", data: { file_id: fid, property: "score", value: star }, dataType: "json",
+                success: r => finish(r && r.state),
+                error: () => finish(false)
+            });
+        }
+    };
+
+    // ========== 菜单绑定 ==========
     function buttonInterval() {
-        let $menu = $("div#js_float_content");
+        const $menu = $("div#js_float_content");
         if ($menu.length === 0) return;
-        let open_dir = $menu.find("li[val='open_dir'], li[data-val='open_dir'], li[menu='open_dir']");
-        if (open_dir.length !== 0 && $("li#rename_list").length === 0) {
-            open_dir.before(rename_list);
+        const openDir = $menu.find("li[val='open_dir'], li[data-val='open_dir'], li[menu='open_dir']");
+        if (openDir.length !== 0 && $("li#rename_list").length === 0) {
+            openDir.before(rename_list);
             $("a#local_code_process").off("click").on("click", () => rename(local_rename, false));
             $("a#rename_all_multi_date").off("click").on("click", () => rename(rename_multi, true));
-            $("a#archive_to_folder").off("click").on("click", () => archiveToActorFolder());
-            $("a#set_archive_root").off("click").on("click", () => setArchiveRoot());
-            $("a#get_javdb_rating").off("click").on("click", () => getJavdbRating());
+            $("a#archive_to_folder").off("click").on("click", archiveToActorFolder);
+            $("a#set_archive_root").off("click").on("click", setArchiveRoot);
+            $("a#get_javdb_rating").off("click").on("click", getJavdbRating);
             clearInterval(interval);
         }
     }
 
     function setArchiveRoot() {
-        let selectedFolder = $("iframe[rel='wangpan']").contents().find("li.selected");
-        if (selectedFolder.length !== 1) {
-            showPageNotification("请只选择一个文件夹", 'error', 3000);
-            return;
-        }
-        let $item = $(selectedFolder[0]);
-        if ($item.attr("file_type") !== "0") {
-            showPageNotification("请选择文件夹类型", 'error', 3000);
-            return;
-        }
-        let cid = $item.attr("cate_id");
-        let name = $item.attr("title");
+        const sf = $("iframe[rel='wangpan']").contents().find("li.selected");
+        if (sf.length !== 1) { showPageNotification("请只选择一个文件夹", 'error', 3000); return; }
+        const $it = $(sf[0]);
+        if ($it.attr("file_type") !== "0") { showPageNotification("请选择文件夹类型", 'error', 3000); return; }
+        const cid = $it.attr("cate_id"), name = $it.attr("title");
         if (cid) {
-            GM_setValue("archiveRootCid", cid);
-            GM_setValue("archiveRootName", name);
+            GM_setValue("archiveRootCid", cid); GM_setValue("archiveRootName", name);
             archiveRootCid = cid; archiveRootName = name;
-            cleanupExistingRootInfo();
-            showArchiveRootInfo();
+            cleanupExistingRootInfo(); showArchiveRootInfo();
             showPageNotification(`归档根目录设置成功: "${name}"`, 'success', 5000);
         }
     }
-
-    // 归档与评分暂时保留空实现
-    function archiveToActorFolder() {
-        showPageNotification(`该功能在当前版本暂不支持`, 'info', 3000);
-    }
-
-    function getJavdbRating() {
-        showPageNotification(`已知问题：暂不支持获取JavDB评分`, 'error', 3000);
-    }
-
 })();
