@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.7.4
+// @version         1.7.5
 // @description     115网盘视频整理：本地加工+多站改名(JavLibrary→JavBus→xslist→JavDB)+评分获取+归档(按女优/系列)，分段统一，智能标记，广告清理
 // @author          sonarlee
 // @include         https://115.com/*
@@ -28,10 +28,6 @@
 
 (function () {
     "use strict";
-
-    // 直接运行，不再循环等待 $（恢复 1.7.0 的启动方式）
-    const $ = window.$;
-    if (!$) return; // 安全退出，避免报错
 
     // ========== UI 初始化 ==========
     const rootInfoId = 'archive-root-info-' + Date.now();
@@ -315,7 +311,566 @@
         }
     };
 
-    // 后续功能函数 (buildNewName, send_115, 多站刮削, 改名, 批量, 归档, 评分) 与 v1.7.3 完全相同，此处省略以节省篇幅，但已包含在完整版中。
-    // 如需完整代码，请直接使用上面提供的完整脚本（已内嵌所有函数）。
-    // 以下省略部分实际已整合在本回复的完整脚本中，建议直接复制最上方完整代码块。
+    // ========== 构建新名称 & 发送 ==========
+    const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
+        let name = vInfo.fullCode;
+        if (title) name += ' ' + title.trim();
+        if (actresses && actresses.length) name += ' ' + actresses.join('・');
+        if (vInfo.markers && vInfo.markers.length) {
+            const uniq = [...new Set(vInfo.markers)].filter(Boolean);
+            if (uniq.length) name += ' ' + uniq.map(m => `【${m}】`).join('');
+        }
+        if (dateStr) name += '_' + dateStr;
+        if (suffix) name += suffix;
+        return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
+    };
+
+    const send_115 = (id, name, fh, callback) => {
+        const fn = name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
+        $.post("https://webapi.115.com/files/edit", { fid: id, file_name: fn }, data => {
+            const r = JSON.parse(data);
+            if (!r.state) showPageNotification(`${fh} 修改失败: ${r.error}`, 'error', 3000);
+            else showPageNotification(`${fh} 修改成功`, 'success', 2000);
+            if (typeof callback === 'function') callback();
+        }).fail(() => { showPageNotification(`${fh} 请求失败`, 'error', 3000); if (typeof callback === 'function') callback(); });
+    };
+
+    // ========== 多站刮削 ==========
+    const normDate = d => {
+        if (!d) return '';
+        const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+        if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+        const m2 = d.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (m2) return `${m2[3]}-${m2[2]}-${m2[1]}`;
+        return d;
+    };
+
+    const fetchJavlib = (code, ok, fail) => {
+        GM_xmlhttpRequest({
+            method: "GET", url: javlibSearchBase + encodeURIComponent(code),
+            onload: x => {
+                try {
+                    const $s = $(x.responseText);
+                    let link = $s.find("#video_title a").attr("href") || $s.find("div.video a[href*='?v=']").first().attr("href");
+                    if (!link) return fail && fail("JavLibrary 搜索无结果");
+                    if (link.startsWith('/')) link = javlibBase.replace(/\/+$/, '') + link;
+                    GM_xmlhttpRequest({
+                        method: "GET", url: link,
+                        onload: xx => {
+                            try {
+                                const $d = $(xx.responseText);
+                                let ttl = $d.find("#video_title a").first().text().trim() || $d.find("#video_title").text().trim();
+                                if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
+                                const dateText = $d.find("#video_date td.text").text().trim();
+                                const isoDate = normDate(dateText);
+                                const actresses = [];
+                                $d.find("#video_cast td.text a").each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                                if (!ttl) return fail && fail("JavLibrary 无标题");
+                                const info = { title: ttl, date: isoDate, actresses };
+                                infoCache[code.toUpperCase()] = info;
+                                ok && ok(info);
+                            } catch (e) { fail && fail("JavLibrary 解析失败: " + e.message); }
+                        },
+                        onerror: () => fail && fail("JavLibrary 详情页请求失败")
+                    });
+                } catch (e) { fail && fail("JavLibrary 搜索解析失败: " + e.message); }
+            },
+            onerror: () => fail && fail("JavLibrary 搜索请求失败")
+        });
+    };
+
+    const fetchJavbus = (code, ok, fail) => {
+        const tryUrl = u => {
+            GM_xmlhttpRequest({
+                method: "GET", url: u + code,
+                onload: x => {
+                    try {
+                        const $r = $(x.responseText);
+                        let ttl = null;
+                        const h3 = $r.find("h3");
+                        if (h3.length) { ttl = h3.text().trim(); if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim(); }
+                        if (!ttl) ttl = $r.find("div.photo-frame img").attr("title");
+                        if (!ttl) {
+                            ttl = $r.find("title").text().trim();
+                            if (ttl.includes(" - JavBus")) ttl = ttl.split(" - JavBus")[0].trim();
+                            if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
+                        }
+                        let isoDate = '';
+                        $r.find("p").each(function () { const t = $(this).text().trim(); if (/發行日期|发行日期/.test(t)) { const m = t.match(/(\d{4}-\d{2}-\d{2})/); if (m) isoDate = normDate(m[1]); } });
+                        if (!isoDate) {
+                            const p = $r.find(".info p:contains('發行日期'), .info p:contains('发行日期')");
+                            if (p.length) isoDate = normDate(p.text().replace(/.*?[:：]/, '').trim());
+                        }
+                        const actresses = [];
+                        $r.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                        if (!ttl) {
+                            if (u !== javbusUncensoredBase) return tryUrl(javbusUncensoredBase);
+                            return fail && fail("JavBus 无标题");
+                        }
+                        const info = { title: ttl, date: isoDate, actresses };
+                        infoCache[code.toUpperCase()] = info;
+                        ok && ok(info);
+                    } catch (e) { fail && fail("JavBus 解析失败: " + e.message); }
+                },
+                onerror: () => {
+                    if (u !== javbusUncensoredBase) return tryUrl(javbusUncensoredBase);
+                    fail && fail("JavBus 请求失败");
+                }
+            });
+        };
+        tryUrl(javbusDirectAccess);
+    };
+
+    const fetchXslist = (code, ok, fail) => {
+        const parsePage = ($pg, cbOk, cbFail) => {
+            const uc = code.toUpperCase();
+            let tr = null;
+            $pg.find("#movices tbody tr").each(function () {
+                const c = ($(this).find("td").eq(0).find("strong").text() || '').trim().toUpperCase();
+                if (c === uc) { tr = $(this); return false; }
+            });
+            if (!tr) return cbFail && cbFail("xslist 模型页未列出该番号");
+            const $tds = tr.find("td");
+            const ttl = $tds.eq(1).text().trim();
+            const dt = $tds.eq(2).text().trim();
+            let isoDate = '';
+            if (dt && !/n\/a/i.test(dt)) isoDate = normDate(dt);
+            const aname = $pg.find("h1 span[itemprop='name']").first().text().trim();
+            const actresses = aname ? [aname] : [];
+            if (!ttl) return cbFail && cbFail("xslist 无标题");
+            const info = { title: ttl, date: isoDate, actresses };
+            infoCache[code.toUpperCase()] = info;
+            cbOk && cbOk(info);
+        };
+        GM_xmlhttpRequest({
+            method: "GET", url: xslistBase + "search?query=" + encodeURIComponent(code),
+            onload: x => {
+                try {
+                    const $s = $(x.responseText);
+                    if ($s.find("#movices").length && $s.find("h1 span[itemprop='name']").length) {
+                        return parsePage($s, ok, fail);
+                    }
+                    let link = $s.find("a[href*='/model/']").first().attr("href");
+                    if (!link) return fail && fail("xslist 搜索无结果");
+                    if (link.startsWith('/')) link = xslistBase.replace(/\/+$/, '') + link;
+                    GM_xmlhttpRequest({
+                        method: "GET", url: link,
+                        onload: dx => { try { parsePage($(dx.responseText), ok, fail); } catch (e) { fail && fail("xslist 详情解析失败: " + e.message); } },
+                        onerror: () => fail && fail("xslist 详情页请求失败")
+                    });
+                } catch (e) { fail && fail("xslist 搜索解析失败: " + e.message); }
+            },
+            onerror: () => fail && fail("xslist 搜索请求失败")
+        });
+    };
+
+    const fetchJavdb = (code, ok, fail) => {
+        GM_xmlhttpRequest({
+            method: "GET", url: `${javdbSearchBase}${encodeURIComponent(code)}&f=all`,
+            onload: x => {
+                try {
+                    const $h = $(x.responseText);
+                    let link = $h.find('a[href*="/v/"]').first().attr('href') || $h.find('.movie-list .item a').first().attr('href');
+                    if (!link) return fail && fail("JavDB 搜索无结果");
+                    if (link.startsWith('/')) link = javdbBase + link;
+                    GM_xmlhttpRequest({
+                        method: "GET", url: link,
+                        onload: dx => {
+                            try {
+                                const $d = $(dx.responseText);
+                                let ttl = $d.find('h2.title').text().trim() || $d.find('strong.current-title').text().trim();
+                                if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
+                                let dateText = '';
+                                $d.find('.panel-block').each(function () {
+                                    const t = $(this).text().trim();
+                                    if (/日期:|發行日期:|发行日期:/.test(t)) { dateText = t.replace(/.*?[:：]/, '').trim(); return false; }
+                                });
+                                const isoDate = normDate(dateText);
+                                const actresses = [];
+                                $d.find('a[href*="/actors/"]').each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                                if (!ttl) return fail && fail("JavDB 无标题");
+                                const info = { title: ttl, date: isoDate, actresses };
+                                infoCache[code.toUpperCase()] = info;
+                                ok && ok(info);
+                            } catch (e) { fail && fail("JavDB 详情解析失败: " + e.message); }
+                        },
+                        onerror: () => fail && fail("JavDB 详情页请求失败")
+                    });
+                } catch (e) { fail && fail("JavDB 搜索解析失败: " + e.message); }
+            },
+            onerror: () => fail && fail("JavDB 搜索请求失败")
+        });
+    };
+
+    // ========== 改名主流程 ==========
+    window.rename_multi = (fid, vInfo, suffix, addDate, callback) => {
+        const code = vInfo.queryCode;
+        if (/^FC2-PPV-\d{5,7}$/i.test(code)) {
+            showPageNotification('FC2 番号不支持在线信息，使用本地改名', 'info', 2500);
+            local_rename(fid, vInfo, suffix, addDate, callback);
+            return;
+        }
+        const key = code.toUpperCase();
+        if (infoCache[key]) {
+            const info = infoCache[key];
+            const title = info.title || '';
+            const date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
+            send_115(fid, buildNewName(vInfo, title, info.actresses, date, suffix), vInfo.fullCode, callback);
+            return;
+        }
+        const apply = info => {
+            const title = info.title || '';
+            const date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
+            send_115(fid, buildNewName(vInfo, title, info.actresses, date, suffix), vInfo.fullCode, callback);
+        };
+        fetchJavlib(code, apply, () => {
+            fetchJavbus(code, apply, () => {
+                fetchXslist(code, apply, () => {
+                    fetchJavdb(code, apply, () => {
+                        showPageNotification(`所有信息源未找到 ${code}`, 'error', 4000);
+                        if (typeof callback === 'function') callback();
+                    });
+                });
+            });
+        });
+    };
+
+    const local_rename = (fid, vInfo, suffix, addDate, callback) => {
+        send_115(fid, buildNewName(vInfo, vInfo.localTitle, [], vInfo.date, suffix), vInfo.fullCode, callback);
+    };
+
+    // ========== 批量处理 ==========
+    const rename = (call, addDate) => {
+        const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
+        const cnt = $items.length;
+        if (!cnt) { showPageNotification("请先选择文件或文件夹", 'info', 3000); return; }
+        const isLocal = (call === local_rename);
+        progressBox.init(isLocal ? '本地番号加工' : '联网改名', cnt);
+        showPageNotification(`开始处理 ${cnt} 个文件...`, 'info', 3000);
+
+        const tasks = [];
+        $items.each(function () {
+            const $it = $(this);
+            const fn = $it.attr("title");
+            const ft = $it.attr("file_type");
+            let fid, suffix = '';
+            if (ft === "0") fid = $it.attr("cate_id");
+            else {
+                fid = $it.attr("file_id");
+                const idx = fn.lastIndexOf('.');
+                if (idx !== -1) suffix = fn.substring(idx);
+            }
+            if (!fid || !fn) return;
+            const vi = parseVideoInfo(fn);
+            if (!vi) return;
+            tasks.push((done) => { call(fid, vi, suffix, addDate, done); });
+        });
+
+        const concurrency = isLocal ? 5 : 3;
+        let processed = 0;
+        const wrapped = tasks.map(t => done => t(() => { processed++; progressBox.update(processed); done(); }));
+        runTasksWithLimit(wrapped, concurrency, () => {
+            progressBox.finish();
+            showPageNotification(`所有文件处理完成`, 'success', 5000);
+        });
+    };
+
+    // ========== 归档功能 ==========
+    const getSeriesFromCode = code => {
+        const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
+        if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
+        const m = c.match(/^([A-Z]+)-\d+/);
+        return m ? m[1] : null;
+    };
+
+    const findOrCreateFolderAndMove = (fid, folderName, successCallback, failCallback) => {
+        const cid = archiveRootCid || ROOT_DIR_CID;
+        const cleanName = folderName.replace(/[\\/:*?"<>|]/g, ' ');
+        if (folderCidCache[cleanName]) {
+            moveFileToFolder(fid, folderCidCache[cleanName], cleanName, successCallback, failCallback);
+            return;
+        }
+        $.get("https://webapi.115.com/files/search", {
+            search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000
+        }, data => {
+            const result = typeof data === 'string' ? JSON.parse(data) : data;
+            if (result.state && result.data && result.data.count > 0) {
+                const found = result.data.list.find(item => item.name === cleanName && item.file_type === "0");
+                if (found) {
+                    folderCidCache[cleanName] = found.cid;
+                    moveFileToFolder(fid, found.cid, cleanName, successCallback, failCallback);
+                    return;
+                }
+            }
+            $.post("https://webapi.115.com/files/add", { pid: cid, cname: cleanName }, createData => {
+                const createResult = typeof createData === 'string' ? JSON.parse(createData) : createData;
+                if (createResult.state) {
+                    folderCidCache[cleanName] = createResult.cid;
+                    moveFileToFolder(fid, createResult.cid, cleanName, successCallback, failCallback);
+                } else {
+                    if (createResult.errno === 20004) {
+                        $.get("https://webapi.115.com/files/search", { search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000 }, data2 => {
+                            const res2 = JSON.parse(data2);
+                            const found2 = res2.data && res2.data.list.find(item => item.name === cleanName && item.file_type === "0");
+                            if (found2) {
+                                folderCidCache[cleanName] = found2.cid;
+                                moveFileToFolder(fid, found2.cid, cleanName, successCallback, failCallback);
+                            } else {
+                                showPageNotification(`创建文件夹失败，且未找到同名文件夹`, 'error', 3000);
+                                if (typeof failCallback === 'function') failCallback('重名冲突');
+                            }
+                        });
+                    } else {
+                        showPageNotification(`创建文件夹失败: ${createResult.error || '未知错误'}`, 'error', 3000);
+                        if (typeof failCallback === 'function') failCallback(createResult.error);
+                    }
+                }
+            }).fail(() => {
+                showPageNotification('创建文件夹请求失败', 'error', 3000);
+                if (typeof failCallback === 'function') failCallback('网络错误');
+            });
+        }).fail(() => {
+            showPageNotification('搜索文件夹请求失败', 'error', 3000);
+            if (typeof failCallback === 'function') failCallback('网络错误');
+        });
+    };
+
+    const moveFileToFolder = (fid, targetCid, folderName, successCallback, failCallback) => {
+        $.post("https://webapi.115.com/files/move", { pid: targetCid, fid: fid }, data => {
+            const result = typeof data === 'string' ? JSON.parse(data) : data;
+            if (result.state) {
+                showPageNotification(`已归档到 ${folderName}`, 'success', 2000);
+                if (typeof successCallback === 'function') successCallback();
+            } else {
+                const errorMsg = result.error || '未知错误';
+                if (errorMsg.includes('尚未完成') || errorMsg.includes('请稍后再试')) {
+                    showPageNotification(`归档到 ${folderName} 暂时失败，请稍后重试`, 'error', 5000);
+                } else {
+                    showPageNotification(`归档到 ${folderName} 失败: ${errorMsg}`, 'error', 5000);
+                }
+                if (typeof failCallback === 'function') failCallback(errorMsg);
+            }
+        }).fail(err => {
+            showPageNotification(`移动文件请求失败: ${err.statusText || '网络错误'}`, 'error', 5000);
+            if (typeof failCallback === 'function') failCallback(err.statusText);
+        });
+    };
+
+    const requestActressForArchive = (fid, code, seriesName, archiveMode, doneCallback) => {
+        const key = code.toUpperCase();
+        if (actressCache[key] && actressCache[key].length) {
+            const folderName = (archiveMode === "2" && seriesName) ? `${actressCache[key][0]} - ${seriesName}` : actressCache[key][0];
+            findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
+            return;
+        }
+        GM_xmlhttpRequest({
+            method: "GET", url: javbusDirectAccess + code,
+            onload: xhr => {
+                const $r = $(xhr.responseText);
+                const actresses = [];
+                $r.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
+                if (actresses.length) {
+                    actressCache[key] = actresses;
+                    const folderName = (archiveMode === "2" && seriesName) ? `${actresses[0]} - ${seriesName}` : actresses[0];
+                    findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
+                } else {
+                    GM_xmlhttpRequest({
+                        method: "GET", url: javbusUncensoredBase + code,
+                        onload: xhr2 => {
+                            const $r2 = $(xhr2.responseText);
+                            const actresses2 = [];
+                            $r2.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses2.push(n); });
+                            if (actresses2.length) {
+                                actressCache[key] = actresses2;
+                                const folderName = (archiveMode === "2" && seriesName) ? `${actresses2[0]} - ${seriesName}` : actresses2[0];
+                                findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
+                            } else {
+                                showPageNotification(`未找到 ${code} 的演员信息`, 'error', 3000);
+                                doneCallback();
+                            }
+                        },
+                        onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
+                    });
+                }
+            },
+            onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
+        });
+    };
+
+    const archiveToActorFolder = () => {
+        const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
+        const cnt = $items.length;
+        if (!cnt) { showPageNotification("请先选择文件或文件夹", 'info', 3000); return; }
+        if (!archiveRootCid) {
+            showPageNotification("请先设置归档根目录（右键文件夹 → 设为归档根目录）", 'error', 5000);
+            return;
+        }
+        const mode = prompt("选择归档方式：\n1 - 按女优\n2 - 按番号系列\n3 - 按女优+系列");
+        if (!mode || !['1', '2', '3'].includes(mode)) { showPageNotification("无效选择", 'error', 3000); return; }
+        progressBox.init('归档', cnt);
+        showPageNotification(`开始归档 ${cnt} 个项目...`, 'info', 3000);
+        let processed = 0, success = 0;
+
+        const tasks = [];
+        $items.each(function () {
+            const $it = $(this);
+            const fn = $it.attr("title");
+            const ft = $it.attr("file_type");
+            let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
+            if (!fid || !fn) return;
+            const vi = parseVideoInfo(fn);
+            if (!vi) { processed++; progressBox.update(processed); return; }
+            const series = getSeriesFromCode(vi);
+            if ((mode === "2" || mode === "3") && !series) {
+                showPageNotification(`无法识别 ${vi.queryCode} 的系列，跳过`, 'error', 2500);
+                processed++; progressBox.update(processed);
+                return;
+            }
+            tasks.push(done => {
+                if (mode === "1") {
+                    requestActressForArchive(fid, vi.queryCode, null, "1", () => { processed++; success++; progressBox.update(processed); done(); });
+                } else if (mode === "2") {
+                    findOrCreateFolderAndMove(fid, series, () => { processed++; success++; progressBox.update(processed); done(); }, () => { processed++; progressBox.update(processed); done(); });
+                } else if (mode === "3") {
+                    requestActressForArchive(fid, vi.queryCode, series, "2", () => { processed++; success++; progressBox.update(processed); done(); });
+                } else {
+                    processed++; progressBox.update(processed); done();
+                }
+            });
+        });
+
+        runTasksWithLimit(tasks, 3, () => {
+            progressBox.finish();
+            showPageNotification(`归档完成：成功 ${success}/${cnt}`, 'success', 5000);
+        });
+    };
+
+    // ========== JavDB 评分 ==========
+    const getJavdbRating = () => {
+        const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
+        const cnt = $items.length;
+        if (!cnt) { showPageNotification("请先选择文件或文件夹", 'info', 3000); return; }
+        progressBox.init('获取评分', cnt);
+        showPageNotification(`开始获取 ${cnt} 个项目的评分...`, 'info', 3000);
+        let processed = 0, success = 0;
+        const tasks = [];
+        $items.each(function () {
+            const $it = $(this);
+            const fn = $it.attr("title");
+            const ft = $it.attr("file_type");
+            let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
+            if (!fid || !fn) return;
+            const vi = parseVideoInfo(fn);
+            if (!vi || !vi.queryCode) return;
+            tasks.push(done => {
+                requestJavdbRating(fid, vi.queryCode, fn, ok => {
+                    processed++; if (ok) success++;
+                    progressBox.update(processed);
+                    done();
+                });
+            });
+        });
+        runTasksWithLimit(tasks, 2, () => {
+            progressBox.finish();
+            showPageNotification(`评分获取完成：成功 ${success}/${cnt}`, 'success', 5000);
+        });
+    };
+
+    const requestJavdbRating = (fid, fh, fname, callback) => {
+        GM_xmlhttpRequest({
+            method: "GET", url: `${javdbSearchBase}${encodeURIComponent(fh)}&f=all`, timeout: 10000,
+            onload: xhr => {
+                if (xhr.status !== 200) { callback(false); return; }
+                try {
+                    const doc = new DOMParser().parseFromString(xhr.responseText, "text/html");
+                    const item = doc.querySelector('.movie-list .item');
+                    if (item) {
+                        let rating = parseFloat(item.getAttribute('score'));
+                        if (isNaN(rating)) {
+                            const rel = item.querySelector('.score .value');
+                            if (rel) {
+                                const m = rel.textContent.trim().match(/(\d+\.\d+)分/);
+                                if (m) rating = parseFloat(m[1]);
+                            }
+                        }
+                        if (!isNaN(rating)) { update115Rating(fid, Math.round(rating), fh, fname, callback); return; }
+                        const link = item.querySelector('a.box');
+                        if (link) {
+                            const href = link.getAttribute('href');
+                            if (href) {
+                                const detailUrl = javdbBase + (href.startsWith('/') ? href : '/' + href);
+                                GM_xmlhttpRequest({
+                                    method: "GET", url: detailUrl, timeout: 10000,
+                                    onload: dx => {
+                                        try {
+                                            const dd = new DOMParser().parseFromString(dx.responseText, "text/html");
+                                            const rEl = dd.querySelector('.panel-block .value');
+                                            if (rEl) {
+                                                const rating = parseFloat(rEl.textContent.trim().match(/(\d+\.\d+)/)?.[1]);
+                                                if (!isNaN(rating)) { update115Rating(fid, Math.round(rating), fh, fname, callback); return; }
+                                            }
+                                            callback(false);
+                                        } catch (e) { callback(false); }
+                                    },
+                                    onerror: () => callback(false),
+                                    ontimeout: () => callback(false)
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    callback(false);
+                } catch (e) { callback(false); }
+            },
+            onerror: () => callback(false),
+            ontimeout: () => callback(false)
+        });
+    };
+
+    const update115Rating = (fid, star, fh, fname, callback) => {
+        star = Math.max(1, Math.min(5, star));
+        const finish = (ok) => { showPageNotification(`"${fh}"评分${ok ? `更新为 ${star} 星` : '更新失败'}`, ok ? 'success' : 'error', 2000); callback(ok); };
+        $.ajax({
+            url: "https://webapi.115.com/files/score", type: "POST", data: { file_id: fid, score: star }, dataType: "json",
+            success: r => { if (r && r.state) finish(true); else backupScore(); },
+            error: backupScore
+        });
+        function backupScore() {
+            $.ajax({
+                url: "https://webapi.115.com/files/edit_property", type: "POST", data: { file_id: fid, property: "score", value: star }, dataType: "json",
+                success: r => finish(r && r.state),
+                error: () => finish(false)
+            });
+        }
+    };
+
+    // ========== 菜单绑定 ==========
+    function buttonInterval() {
+        const $menu = $("div#js_float_content");
+        if ($menu.length === 0) return;
+        const openDir = $menu.find("li[val='open_dir'], li[data-val='open_dir'], li[menu='open_dir']");
+        if (openDir.length !== 0 && $("li#rename_list").length === 0) {
+            openDir.before(rename_list);
+            $("a#local_code_process").off("click").on("click", () => rename(local_rename, false));
+            $("a#rename_all_multi_date").off("click").on("click", () => rename(rename_multi, true));
+            $("a#archive_to_folder").off("click").on("click", archiveToActorFolder);
+            $("a#set_archive_root").off("click").on("click", setArchiveRoot);
+            $("a#get_javdb_rating").off("click").on("click", getJavdbRating);
+            clearInterval(interval);
+        }
+    }
+
+    function setArchiveRoot() {
+        const sf = $("iframe[rel='wangpan']").contents().find("li.selected");
+        if (sf.length !== 1) { showPageNotification("请只选择一个文件夹", 'error', 3000); return; }
+        const $it = $(sf[0]);
+        if ($it.attr("file_type") !== "0") { showPageNotification("请选择文件夹类型", 'error', 3000); return; }
+        const cid = $it.attr("cate_id"), name = $it.attr("title");
+        if (cid) {
+            GM_setValue("archiveRootCid", cid); GM_setValue("archiveRootName", name);
+            archiveRootCid = cid; archiveRootName = name;
+            cleanupExistingRootInfo(); showArchiveRootInfo();
+            showPageNotification(`归档根目录设置成功: "${name}"`, 'success', 5000);
+        }
+    }
 })();
