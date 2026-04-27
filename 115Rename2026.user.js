@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.6
-// @description     115网盘视频整理：长番号优先匹配 | 文件名备份 | 改名对比导出 | 多站改名+归档+评分
+// @version         1.8.9
+// @description     115视频整理：分段彻底保留｜对比导出精准｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -44,17 +44,17 @@
     cleanupExistingRootInfo();
 
     const uiStyle = `<style>
-        [id^="archive-root-info"] { position: fixed; top: 20px; right: 20px; max-width: 300px; background-color: rgba(0,0,0,0.8); color: white; padding: 12px 20px; border-radius: 4px; z-index: 9998; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border-left: 4px solid #1890ff; }
-        .custom-notification { position: fixed; top: 80px; right: 20px; max-width: 300px; background-color: rgba(0,0,0,0.8); color: white; padding: 12px 20px; border-radius: 4px; z-index: 9999; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: all 0.3s ease; opacity: 0; transform: translateY(-10px); }
+        [id^="archive-root-info"] { position: fixed; top: 20px; right: 20px; max-width: 300px; background: rgba(0,0,0,.8); color: #fff; padding: 12px 20px; border-radius: 4px; z-index: 9998; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.15); border-left: 4px solid #1890ff; }
+        .custom-notification { position: fixed; top: 80px; right: 20px; max-width: 300px; background: rgba(0,0,0,.8); color: #fff; padding: 12px 20px; border-radius: 4px; z-index: 9999; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.15); transition: all .3s ease; opacity: 0; transform: translateY(-10px); }
         .custom-notification.success { border-left: 4px solid #52c41a; }
         .custom-notification.error { border-left: 4px solid #f5222d; }
         .custom-notification.info { border-left: 4px solid #1890ff; }
         .custom-notification.show { opacity: 1; transform: translateY(0); }
-        #task-progress-box { position: fixed; bottom: 20px; right: 20px; min-width: 260px; background-color: rgba(0,0,0,0.8); color: #fff; padding: 10px 14px; border-radius: 4px; z-index: 9999; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        #task-progress-box { position: fixed; bottom: 20px; right: 20px; min-width: 260px; background: rgba(0,0,0,.8); color: #fff; padding: 10px 14px; border-radius: 4px; z-index: 9999; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
         #task-progress-box .tp-title { font-size: 12px; margin-bottom: 6px; }
-        #task-progress-box .tp-bar-outer { width: 100%; height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; }
-        #task-progress-box .tp-bar-inner { height: 100%; width: 0%; background: #1890ff; transition: width 0.2s ease; }
-        #task-progress-box .tp-text { margin-top: 4px; text-align: right; font-size: 11px; opacity: 0.9; }
+        #task-progress-box .tp-bar-outer { width: 100%; height: 6px; background: rgba(255,255,255,.15); border-radius: 3px; overflow: hidden; }
+        #task-progress-box .tp-bar-inner { height: 100%; width: 0%; background: #1890ff; transition: width .2s ease; }
+        #task-progress-box .tp-text { margin-top: 4px; text-align: right; font-size: 11px; opacity: .9; }
     </style>`;
     $('head').append(uiStyle);
 
@@ -169,7 +169,6 @@
     };
     const AD_BADGES = /\[3Q\]|\(原\)|\[BT\]|【广告】|\[廣告\]/gi;
 
-    // 安全移除标记（不伤前缀）
     const removeMarkers = (str) => {
         return str.replace(MARKER_PATTERN, (match, p1, offset, full) => {
             const lower = match.toLowerCase();
@@ -179,7 +178,7 @@
         });
     };
 
-    // ========== 番号前缀库（长前缀优先） ==========
+    // ========== 番号前缀库（长优先） ==========
     const CODE_PREFIXES = [
         'LEGSJAPAN', 'AYAKISAKI', 'SPERMMANIA', 'FELLATIOJAPAN',
         'S2MCR', 'MXVR', 'SIVR',
@@ -231,7 +230,7 @@
         return null;
     };
 
-    // ========== 核心解析 ==========
+    // ========== 核心解析（修复分段） ==========
     const parseVideoInfo = origTitle => {
         try {
             if (!origTitle) return null;
@@ -239,7 +238,7 @@
             let rawNoExt = raw.replace(/\.\w{2,5}$/, '');
             rawNoExt = stripDomainPrefix(rawNoExt);
 
-            // 提取独立标记
+            // 标记提取
             let markers = [];
             rawNoExt.replace(MARKER_PATTERN, (match, p1, offset, full) => {
                 const lower = match.toLowerCase();
@@ -261,7 +260,6 @@
                 rawNoExt = rawNoExt.replace(dm[0], ' ');
             }
 
-            // 用于番号提取的干净字符串（移除标记但保护前缀）
             let t = removeMarkers(rawNoExt).toUpperCase();
             t = t.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             t = t.replace(GARBAGE_REGEX, ' ').replace(/[\[\]\{\}（）【】]/g, ' ').replace(/[_\.\-\/\\]+/g, ' ');
@@ -305,48 +303,54 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            let cleanTitle = rawNoExt;
-            cleanTitle = removeMarkers(cleanTitle);
-            cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
-            const mCode = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
-            if (mCode) {
-                const p = mCode[1], n = mCode[2];
-                cleanTitle = cleanTitle.replace(new RegExp(`\\b${p}[-_ .]?0*${n}\\b`, 'gi'), ' ');
-                cleanTitle = cleanTitle.replace(new RegExp(`\\b${p}\\s+0*${n}\\b`, 'gi'), ' ');
-                cleanTitle = cleanTitle.replace(new RegExp(`\\b${p}${n}\\b`, 'gi'), ' ');
-            }
-            if (/^Tokyo[-_\s]*Hot[-_\s]*[nN]/.test(baseCode)) {
-                const tn = baseCode.match(/\d{3,4}$/)[0];
-                cleanTitle = cleanTitle.replace(new RegExp(`\\bTokyo\\s*[-_\\s]*Hot\\s*[-_\\s]*[nN]?\\s*0*${tn}\\b`, 'gi'), ' ');
+            // ========== 分段提取（强化） ==========
+            let part = '';
+            const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+            // 优先匹配 "番号-数字" 且数字后可以是空格、括号、中文、或结尾
+            const directPartRegex = new RegExp(`${escapedBase}[_-](\\d{1,3})(?=[\\s\\]\\[【\\.\\-]|$)`, 'i');
+            const directMatch = rawNoExt.match(directPartRegex);
+            if (directMatch) {
+                part = directMatch[1];
+                rawNoExt = rawNoExt.replace(directMatch[0], ' ');
+            } else {
+                // 再尝试 Part 等关键词
+                const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
+                const pmSeg = rawNoExt.match(partRegex);
+                if (pmSeg) {
+                    part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase();
+                    rawNoExt = rawNoExt.replace(pmSeg[0], ' ');
+                }
             }
 
-            let part = '';
-            const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
-            const pmSeg = cleanTitle.match(partRegex);
-            if (pmSeg) {
-                part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase();
-                cleanTitle = cleanTitle.replace(pmSeg[0], ' ');
-            }
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
-            let localTitle = cleanTitle;
-            localTitle = localTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
-            localTitle = localTitle.replace(AD_BADGES, ' ');
-            localTitle = localTitle.replace(GARBAGE_REGEX, ' ');
-            localTitle = localTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+            // 本地标题清洗
+            let cleanTitle = removeMarkers(rawNoExt);
+            cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
+            cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
+            cleanTitle = cleanTitle.replace(AD_BADGES, ' ');
+            cleanTitle = cleanTitle.replace(GARBAGE_REGEX, ' ');
+            cleanTitle = cleanTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-            return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle };
+            return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
             console.error('parseVideoInfo error:', e);
             return null;
         }
     };
 
-    // ========== 构建新名称 & 发送 ==========
+    // ========== 构建新名称 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
         let name = vInfo.fullCode;
-        if (title) name += ' ' + title.trim();
-        if (actresses && actresses.length) name += ' ' + actresses.join('・');
+        let cleanTitle = title.replace(/【[^】]*】/g, '').trim();
+        if (cleanTitle) name += ' ' + cleanTitle;
+        if (actresses && actresses.length) {
+            const actressStr = actresses.join('・');
+            if (!cleanTitle.includes(actressStr)) {
+                name += ' ' + actressStr;
+            }
+        }
         if (vInfo.markers && vInfo.markers.length) {
             const uniq = [...new Set(vInfo.markers)].filter(Boolean);
             if (uniq.length) name += ' ' + uniq.map(m => `【${m}】`).join('');
@@ -356,12 +360,17 @@
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
-    const send_115 = (id, name, fh, callback) => {
+    // ========== 改名发送（含对比收集） ==========
+    let renameCompareList = [];
+    const send_115 = (id, name, fh, origFilename, callback) => {
         const fn = name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
         $.post("https://webapi.115.com/files/edit", { fid: id, file_name: fn }, data => {
             const r = JSON.parse(data);
             if (!r.state) showPageNotification(`${fh} 修改失败: ${r.error}`, 'error', 3000);
-            else showPageNotification(`${fh} 修改成功`, 'success', 2000);
+            else {
+                showPageNotification(`${fh} 修改成功`, 'success', 2000);
+                if (origFilename) renameCompareList.push({ original: origFilename, new: name });
+            }
             if (typeof callback === 'function') callback();
         }).fail(() => { showPageNotification(`${fh} 请求失败`, 'error', 3000); if (typeof callback === 'function') callback(); });
     };
@@ -401,12 +410,10 @@
                                 infoCache[code.toUpperCase()] = info;
                                 ok && ok(info);
                             } catch (e) { fail && fail("JavLibrary 解析失败: " + e.message); }
-                        },
-                        onerror: () => fail && fail("JavLibrary 详情页请求失败")
+                        }, onerror: () => fail && fail("JavLibrary 详情页请求失败")
                     });
                 } catch (e) { fail && fail("JavLibrary 搜索解析失败: " + e.message); }
-            },
-            onerror: () => fail && fail("JavLibrary 搜索请求失败")
+            }, onerror: () => fail && fail("JavLibrary 搜索请求失败")
         });
     };
 
@@ -490,8 +497,7 @@
                         onerror: () => fail && fail("xslist 详情页请求失败")
                     });
                 } catch (e) { fail && fail("xslist 搜索解析失败: " + e.message); }
-            },
-            onerror: () => fail && fail("xslist 搜索请求失败")
+            }, onerror: () => fail && fail("xslist 搜索请求失败")
         });
     };
 
@@ -524,35 +530,31 @@
                                 infoCache[code.toUpperCase()] = info;
                                 ok && ok(info);
                             } catch (e) { fail && fail("JavDB 详情解析失败: " + e.message); }
-                        },
-                        onerror: () => fail && fail("JavDB 详情页请求失败")
+                        }, onerror: () => fail && fail("JavDB 详情页请求失败")
                     });
                 } catch (e) { fail && fail("JavDB 搜索解析失败: " + e.message); }
-            },
-            onerror: () => fail && fail("JavDB 搜索请求失败")
+            }, onerror: () => fail && fail("JavDB 搜索请求失败")
         });
     };
 
     // ========== 改名主流程 ==========
-    window.rename_multi = (fid, vInfo, suffix, addDate, callback) => {
+    window.rename_multi = (fid, vInfo, suffix, addDate, callback, origFilename) => {
         const code = vInfo.queryCode;
         if (/^FC2-PPV-\d{5,7}$/i.test(code)) {
             showPageNotification('FC2 番号不支持在线信息，使用本地改名', 'info', 2500);
-            local_rename(fid, vInfo, suffix, addDate, callback);
+            local_rename(fid, vInfo, suffix, addDate, callback, origFilename);
             return;
         }
         const key = code.toUpperCase();
         if (infoCache[key]) {
             const info = infoCache[key];
-            const title = info.title || '';
-            const date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
-            send_115(fid, buildNewName(vInfo, title, info.actresses, date, suffix), vInfo.fullCode, callback);
+            const newName = buildNewName(vInfo, info.title || vInfo.localTitle, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ""), suffix);
+            send_115(fid, newName, vInfo.fullCode, origFilename, callback);
             return;
         }
         const apply = info => {
-            const title = info.title || '';
-            const date = (addDate && info.date) ? info.date : (addDate ? vInfo.date : "");
-            send_115(fid, buildNewName(vInfo, title, info.actresses, date, suffix), vInfo.fullCode, callback);
+            const newName = buildNewName(vInfo, info.title || vInfo.localTitle, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ""), suffix);
+            send_115(fid, newName, vInfo.fullCode, origFilename, callback);
         };
         fetchJavlib(code, apply, () => {
             fetchJavbus(code, apply, () => {
@@ -566,11 +568,12 @@
         });
     };
 
-    const local_rename = (fid, vInfo, suffix, addDate, callback) => {
-        send_115(fid, buildNewName(vInfo, vInfo.localTitle, [], vInfo.date, suffix), vInfo.fullCode, callback);
+    const local_rename = (fid, vInfo, suffix, addDate, callback, origFilename) => {
+        const newName = buildNewName(vInfo, vInfo.localTitle, [], vInfo.date, suffix);
+        send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     };
 
-    // ========== 批量处理（带改名对比导出） ==========
+    // ========== 批量处理 ==========
     const rename = (call, addDate) => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         const cnt = $items.length;
@@ -579,7 +582,7 @@
         progressBox.init(isLocal ? '本地番号加工' : '联网改名', cnt);
         showPageNotification(`开始处理 ${cnt} 个文件...`, 'info', 3000);
 
-        const compareList = [];
+        renameCompareList = [];
         const tasks = [];
         $items.each(function () {
             const $it = $(this);
@@ -595,14 +598,7 @@
             if (!fid || !fn) return;
             const vi = parseVideoInfo(fn);
             if (!vi) return;
-            // 预先计算本地改名的新名称，用于对比
-            const predictedNew = buildNewName(vi, vi.localTitle, [], vi.date, suffix);
-            tasks.push((done) => {
-                call(fid, vi, suffix, addDate, () => {
-                    compareList.push({ original: fn, newname: predictedNew });
-                    done();
-                });
-            });
+            tasks.push((done) => { call(fid, vi, suffix, addDate, done, fn); });
         });
 
         const concurrency = isLocal ? 5 : 3;
@@ -616,19 +612,20 @@
             progressBox.finish();
             showPageNotification(`所有文件处理完成`, 'success', 5000);
             setTimeout(() => {
-                if (compareList.length > 0 && confirm("改名已完成，是否导出改名前后对比？")) {
-                    exportCompare(compareList);
+                if (renameCompareList.length > 0 && confirm("改名已完成，是否导出改名前后对比？")) {
+                    exportCompare(renameCompareList);
                 }
             }, 500);
         });
     };
 
     function exportCompare(list) {
-        const text = list.map(item => `【原】${item.original}\n【新】${item.newname}`).join('\n\n');
+        const text = list.map(item => `${item.original}\t${item.new}`).join('\n');
+        const header = '【旧文件名】\t【新文件名】\n';
         if (confirm("是否导出为 TXT 文件？\n（点击“取消”将复制到剪贴板）")) {
-            downloadTxt('Rename_Compare.txt', text);
+            downloadTxt('Rename_Compare.txt', header + text);
         } else {
-            copyToClipboard(text);
+            copyToClipboard(header + text);
         }
     }
 
@@ -666,12 +663,8 @@
 
     function copyToClipboard(text) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(() => {
-                showPageNotification('已复制到剪贴板', 'success', 3000);
-            }).catch(() => {
-                GM_setClipboard(text);
-                showPageNotification('已复制到剪贴板', 'success', 3000);
-            });
+            navigator.clipboard.writeText(text).then(() => showPageNotification('已复制到剪贴板', 'success', 3000))
+                .catch(() => { GM_setClipboard(text); showPageNotification('已复制到剪贴板', 'success', 3000); });
         } else {
             GM_setClipboard(text);
             showPageNotification('已复制到剪贴板', 'success', 3000);
