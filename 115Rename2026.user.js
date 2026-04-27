@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.10
-// @description     115视频整理：彻底清除标题残留番号｜分段保留｜多站改名+归档+评分+备份
+// @version         1.8.12
+// @description     115视频整理：粘连识别+FC2标题修复｜分段保留｜多站+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -214,10 +214,20 @@
 
     const matchCodeByPrefix = str => {
         if (!str) return null;
+        // 严格边界
         for (const p of CODE_PREFIXES) {
             const m = str.match(new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})\\b`, 'i'));
             if (m) return `${p}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
         }
+        // 粘连匹配：数字后非数字即认为结束
+        for (const p of CODE_PREFIXES) {
+            const m = str.match(new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})(?![0-9])`, 'i'));
+            if (m) {
+                const num = m[1];
+                return `${p}-${(num === '0' ? '0' : num).padStart(3, '0')}`;
+            }
+        }
+        // FC2 特殊处理已在外部，这里保留兜底
         const loose = str.match(/\b([A-Z]{2,8})\s*0*(\d{2,5})\b/);
         if (loose) {
             const prefix = loose[1];
@@ -266,14 +276,16 @@
             t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
 
             let queryCode = null, displayCode = null;
-            const thMatch = rawNoExt.match(/Tokyo[\s_-]*Hot[\s_-]*[nN](\d{3,4})/i);
-            if (thMatch) {
-                queryCode = `Tokyo-Hot-n${thMatch[1].padStart(4, '0')}`;
+
+            // FC2 优先
+            const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
+            if (fc2m && fc2m[1]) {
+                queryCode = 'FC2-PPV-' + fc2m[1];
                 displayCode = queryCode;
             } else {
-                const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
-                if (fc2m && fc2m[1]) {
-                    queryCode = 'FC2-PPV-' + fc2m[1];
+                const thMatch = rawNoExt.match(/Tokyo[\s_-]*Hot[\s_-]*[nN](\d{3,4})/i);
+                if (thMatch) {
+                    queryCode = `Tokyo-Hot-n${thMatch[1].padStart(4, '0')}`;
                     displayCode = queryCode;
                 } else {
                     const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
@@ -303,7 +315,7 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // 分段提取（强化）
+            // 分段提取
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const directPartRegex = new RegExp(`${escapedBase}[_-](\\d{1,3})(?=[\\s\\]\\[【\\.\\-]|$)`, 'i');
@@ -321,7 +333,6 @@
             }
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
-            // 本地标题清洗，彻底清除番号残留
             let cleanTitle = removeMarkers(rawNoExt);
             cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
@@ -329,25 +340,37 @@
             cleanTitle = cleanTitle.replace(GARBAGE_REGEX, ' ');
             cleanTitle = cleanTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-            // 额外清理：基于 baseCode 移除所有变体
-            const codeMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
-            if (codeMatch) {
-                const prefix = codeMatch[1];
-                const num = codeMatch[2];
-                const rawNum = parseInt(num, 10).toString(); // 去除前导零
-                const regex = new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi');
-                cleanTitle = cleanTitle.replace(regex, ' ').replace(/\s+/g, ' ').trim();
+            // 强力清除番号残留（包含 FC2 的变体）
+            if (baseCode.startsWith('FC2-PPV-')) {
+                const num = baseCode.split('-')[2];
+                cleanTitle = cleanTitle.replace(new RegExp(`FC2[-_\\s]*PPV[-_\\s]*${num}`, 'gi'), ' ');
+                cleanTitle = cleanTitle.replace(new RegExp(`\\b${num}\\b`, 'g'), ' ');
+                cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim();
+            } else {
+                const codeMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
+                if (codeMatch) {
+                    const prefix = codeMatch[1];
+                    const num = codeMatch[2];
+                    const rawNum = parseInt(num, 10).toString();
+                    const regex = new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi');
+                    cleanTitle = cleanTitle.replace(regex, ' ').replace(/\s+/g, ' ').trim();
+                }
             }
 
-            return { queryCode, baseCode: displayCode || queryCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
+            return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
             console.error('parseVideoInfo error:', e);
             return null;
         }
     };
 
-    // 用于净化标题的公共函数
     const cleanTitleOfCode = (title, baseCode) => {
+        if (baseCode.startsWith('FC2-PPV-')) {
+            const num = baseCode.split('-')[2];
+            title = title.replace(new RegExp(`FC2[-_\\s]*PPV[-_\\s]*${num}`, 'gi'), ' ');
+            title = title.replace(new RegExp(`\\b${num}\\b`, 'g'), ' ');
+            return title.replace(/\s+/g, ' ').trim();
+        }
         const codeMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
         if (!codeMatch) return title;
         const prefix = codeMatch[1];
@@ -357,20 +380,14 @@
         return title.replace(regex, ' ').replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 构建新名称 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
-        // 清洗 title 中的番号残留
         let cleanTitle = cleanTitleOfCode(title, vInfo.baseCode);
-        // 再次移除可能残留的标记
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
-
         let name = vInfo.fullCode;
         if (cleanTitle) name += ' ' + cleanTitle;
         if (actresses && actresses.length) {
             const actressStr = actresses.join('・');
-            if (!cleanTitle.includes(actressStr)) {
-                name += ' ' + actressStr;
-            }
+            if (!cleanTitle.includes(actressStr)) name += ' ' + actressStr;
         }
         if (vInfo.markers && vInfo.markers.length) {
             const uniq = [...new Set(vInfo.markers)].filter(Boolean);
@@ -381,7 +398,6 @@
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
-    // ========== 改名发送（含对比收集） ==========
     let renameCompareList = [];
     const send_115 = (id, name, fh, origFilename, callback) => {
         const fn = name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
@@ -611,11 +627,7 @@
             const ft = $it.attr("file_type");
             let fid, suffix = '';
             if (ft === "0") fid = $it.attr("cate_id");
-            else {
-                fid = $it.attr("file_id");
-                const idx = fn.lastIndexOf('.');
-                if (idx !== -1) suffix = fn.substring(idx);
-            }
+            else { fid = $it.attr("file_id"); const idx = fn.lastIndexOf('.'); if (idx !== -1) suffix = fn.substring(idx); }
             if (!fid || !fn) return;
             const vi = parseVideoInfo(fn);
             if (!vi) return;
@@ -624,19 +636,11 @@
 
         const concurrency = isLocal ? 5 : 3;
         let processed = 0;
-        const wrapped = tasks.map(t => done => t(() => {
-            processed++;
-            progressBox.update(processed);
-            done();
-        }));
+        const wrapped = tasks.map(t => done => t(() => { processed++; progressBox.update(processed); done(); }));
         runTasksWithLimit(wrapped, concurrency, () => {
             progressBox.finish();
             showPageNotification(`所有文件处理完成`, 'success', 5000);
-            setTimeout(() => {
-                if (renameCompareList.length > 0 && confirm("改名已完成，是否导出改名前后对比？")) {
-                    exportCompare(renameCompareList);
-                }
-            }, 500);
+            setTimeout(() => { if (renameCompareList.length > 0 && confirm("改名已完成，是否导出改名前后对比？")) exportCompare(renameCompareList); }, 500);
         });
     };
 
