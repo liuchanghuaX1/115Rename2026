@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.7.5
-// @description     115网盘视频整理：本地加工+多站改名(JavLibrary→JavBus→xslist→JavDB)+评分获取+归档(按女优/系列)，分段统一，智能标记，广告清理
+// @version         1.8.2
+// @description     115网盘视频整理：精准番号+严格分段，绝不误伤前缀；多站改名(JavLibrary→JavBus→xslist→JavDB)+评分+归档
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -31,14 +31,14 @@
 
     // ========== UI 初始化 ==========
     const rootInfoId = 'archive-root-info-' + Date.now();
-    const cleanupExistingRootInfo = () => {
+    function cleanupExistingRootInfo() {
         try {
             document.querySelectorAll('[id^="archive-root-info"]').forEach(el => el.remove());
             document.querySelectorAll('iframe').forEach(iframe => {
                 try { if (iframe.contentDocument) iframe.contentDocument.querySelectorAll('[id^="archive-root-info"]').forEach(el => el.remove()); } catch (e) { }
             });
         } catch (e) { }
-    };
+    }
     cleanupExistingRootInfo();
 
     const uiStyle = `<style>
@@ -139,11 +139,19 @@
     const javdbBase = "https://javdb.com";
     const javdbSearchBase = javdbBase + "/search?q=";
 
+    // ========== 域名清理 ==========
+    const stripDomainPrefix = (filename) => {
+        let cleaned = filename.replace(/^[a-zA-Z0-9_.-]+:\/\/[^\s@]*@/i, '');
+        cleaned = cleaned.replace(/^[a-zA-Z0-9_.-]+\.[a-zA-Z]{2,}@/i, '');
+        cleaned = cleaned.replace(/^@/, '');
+        return cleaned;
+    };
+
     // ========== 垃圾词与标记 ==========
     const GARBAGE_WORDS = [
         'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
         'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
-        'NO', 'WATERMARK', 'RARBG', 'BT', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX',
+        'WATERMARK', 'RARBG', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX',
         '1440P', '1080P', '720P', '480P'
     ];
     const GARBAGE_REGEX = new RegExp('\\b(' + GARBAGE_WORDS.join('|') + ')\\b', 'gi');
@@ -158,25 +166,27 @@
     };
     const AD_BADGES = /\[3Q\]|\(原\)|\[BT\]|【广告】|\[廣告\]/gi;
 
-    // ========== 番号前缀库 ==========
+    // ========== 番号前缀库（长前缀严格优先） ==========
     const CODE_PREFIXES = [
+        'LEGSJAPAN', 'AYAKISAKI', 'SPERMMANIA', 'FELLATIOJAPAN',
+        'S2MCR', 'MXVR', 'SIVR',
         'T28', 'S2M', '300MAAN', '200GANA', '259LUXU', '277DCV', '230GANA', '261ADA',
-        'DASS', 'REBD', 'REBDB', 'MIDV', 'SSIS', 'PRED', 'PRTD', 'FSDSS', 'SIVR', 'SAMA',
+        'DASS', 'REBD', 'REBDB', 'MIDV', 'SSIS', 'PRED', 'PRTD', 'FSDSS', 'SAMA',
         'MIDE', 'MIAD', 'MIAA', 'MIAE', 'MIAS', 'MIGD', 'MIRD', 'MIFD', 'MIID', 'MIZD', 'MDYD', 'MBYD', 'MEYD',
         'WANZ', 'NWF', 'BMW', 'JBD', 'RBD', 'ATAD', 'SHKD', 'SSPD', 'ATID', 'ADN',
         'IPTD', 'IPZ', 'IPX', 'IPZZ', 'IPIT', 'IPITD', 'IDBD', 'SUPD', 'IPSD', 'DAN', 'AND',
         'KAWD', 'KWBD', 'KAPD', 'JUC', 'JUX', 'JUY', 'JUSD', 'JUKD', 'OBA', 'URE',
         'JUFE', 'FINH', 'EBOD', 'MKCK', 'EYAN', 'KIRD', 'KIBD', 'BLK', 'KISD',
-        'ONED', 'SOE', 'SNIS', 'SSNI', 'OFJE', 'SIVR', 'SPS', 'SRXV', 'TMSD', 'NEXD',
+        'ONED', 'SOE', 'SNIS', 'SSNI', 'OFJE', 'SPS', 'SRXV', 'TMSD', 'NEXD',
         'PGD', 'PBD', 'PJD', 'TEK', 'PPPD', 'HND', 'TYOD', 'TPPN', 'BF', 'ZUKO',
         'BID', 'BBI', 'CJOD', 'CLUB', 'MMND', 'TEAM', 'HHK', 'ALB', 'MUKD', 'MUDR', 'MUM',
         'ANND', 'BBAN', 'MOND', 'SPRD', 'VENU', 'VEMA', 'VAGU',
-        'STAR', 'STARS', 'SACE', 'SDMS', 'SDDE', 'SDMT', 'SDDM', 'SDNM', 'SDAB', 'SDSI', 'SDMU',
+        'STARS', 'STAR', 'SACE', 'SDMS', 'SDDE', 'SDMT', 'SDDM', 'SDNM', 'SDAB', 'SDSI', 'SDMU',
         'DVDPS', 'DVDES', 'NHDT', 'NHDTA', 'RNHDT', 'IESP', 'IDOL', 'IENE', 'OPEN',
         'SVND', 'HBAD', 'HAVD', 'NTR', 'VSPDS', 'VSPDR', 'MV', 'FSET', 'DANDY', 'LADY',
-        'HUNT', 'HUNTA', 'HUNTB', 'GAR', 'SVDVD', 'RCT', 'RCTD', 'NGKS', 'RD', 'KUF', 'NSS', 'UPSM', 'SERO',
-        'DV', 'DVAJ', 'XV', 'XVSR', 'PXV', 'XVSE',
-        'MDS', 'MADA', 'MILD', 'RMLD', 'MDB', 'RMDBB', 'RMDS', 'REAL', 'NATR', 'SCOP', 'SAMA', 'BOKD',
+        'HUNTA', 'HUNTB', 'HUNT', 'GAR', 'SVDVD', 'RCT', 'RCTD', 'NGKS', 'RD', 'KUF', 'NSS', 'UPSM', 'SERO',
+        'DVAJ', 'DV', 'XVSR', 'XVSE', 'XV', 'PXV',
+        'MADA', 'MDS', 'RMLD', 'MILD', 'MDB', 'RMDBB', 'RMDS', 'REAL', 'NATR', 'SCOP', 'SAMA', 'BOKD',
         'ABS', 'ABP', 'KBH', 'EZD', 'MAS', 'INU', 'JOB', 'EDD', 'ESK', 'MEK', 'DOM', 'YRZ',
         'PPP', 'EVO', 'SAD', 'GYD', 'HYK', 'FST', 'TBL', 'LOO', 'TOR', 'TD', 'RBS', 'MAN', 'ZZR', 'WPC', 'BNDV', 'CRS',
         'HODV', 'HRDV', 'YMDD', 'TMD', 'DSD', 'RJMD', 'ALD', 'DBE', 'DOJ', 'OFCD', 'SEND', 'ULJM', 'DSS', 'MOED', 'DER',
@@ -186,7 +196,8 @@
         'GOMD', 'GDSC', 'TBW', 'TBB', 'TDP', 'TDLN', 'TGGP', 'THP', 'THZ', 'TMS', 'TZZ', 'TRE', 'TSGS', 'TSDL',
         'TSWN', 'TSW', 'TTRE', 'ATHB', 'AKBD', 'DMG', 'MGJH', 'ANIX', 'CYCD', 'YNO', 'AZGB', 'SKOT', 'SHP', 'JMSZ',
         'JHZD', 'NFDM', 'CGAD', 'CGBD', 'CHSD', 'CUSD', 'CHSH', 'CMV', 'PAED', 'RGI', 'ZARD', 'ZATS', 'ZDAD', 'ZKV',
-        'COSETT', 'MXGS', 'MX3DS', 'IPBZ', 'FSDSS', 'SVMGM', 'MIDA'
+        'COSETT', 'MXGS', 'MX3DS', 'IPBZ', 'FSDSS', 'SVMGM', 'MIDA',
+        'DSAM', 'RED', 'BT', 'MX', 'SI', 'VOL', 'CR', 'N'
     ].sort((a, b) => b.length - a.length);
 
     const matchCodeByPrefix = str => {
@@ -195,32 +206,39 @@
             const m = str.match(new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})\\b`, 'i'));
             if (m) return `${p}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
         }
-        const t = str.replace(/[^A-Z0-9]/ig, '').toUpperCase();
-        for (const p of CODE_PREFIXES) {
-            const idx = t.indexOf(p);
-            if (idx !== -1 && (idx === 0 || !/[A-Z]/.test(t[idx - 1]))) {
-                const rest = t.slice(idx + p.length);
-                const m = rest.match(/^0*(\d{1,5})/);
-                if (m) return `${p}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
+        const loose = str.match(/\b([A-Z]{2,8})\s*0*(\d{2,5})\b/);
+        if (loose) {
+            const prefix = loose[1];
+            if (!GARBAGE_WORDS.includes(prefix) && prefix.length > 1) {
+                let num = Number(loose[2]).toString();
+                if (num === '0') num = '0';
+                return `${prefix}-${num.padStart(3, '0')}`;
             }
         }
         return null;
     };
 
-    // ========== 核心解析（所有改进均保留） ==========
+    // ========== 核心解析 ==========
     const parseVideoInfo = origTitle => {
         try {
             if (!origTitle) return null;
             let raw = String(origTitle);
             let rawNoExt = raw.replace(/\.\w{2,5}$/, '');
-            rawNoExt = rawNoExt.replace(/^.*?[a-zA-Z0-9_.-]+\.[a-zA-Z]{2,}(?:\/.*?)?@/i, '');
+            rawNoExt = stripDomainPrefix(rawNoExt);
 
+            // 1. 标记提取（保护前缀，避免 VR 误伤）
             let markers = [], m;
             while ((m = MARKER_REGEX.exec(rawNoExt))) {
-                const nm = MARKER_MAP[m[1].toLowerCase()];
+                const rawMarker = m[1].toLowerCase();
+                // 若 VR/4K/8K 前后紧跟字母或数字，则跳过（如 SIVR、MXVR）
+                if (rawMarker === 'vr' && m.index > 0 && /[a-z]/i.test(rawNoExt[m.index - 1])) continue;
+                if (rawMarker === 'vr' && m.index + 2 < rawNoExt.length && /[a-z]/i.test(rawNoExt[m.index + 2])) continue;
+                if ((rawMarker === '4k' || rawMarker === '8k') && m.index > 0 && /[a-z0-9]/i.test(rawNoExt[m.index - 1])) continue;
+                const nm = MARKER_MAP[rawMarker];
                 if (nm && !markers.includes(nm)) markers.push(nm);
             }
 
+            // 2. 日期提取并移除
             let dateStr = '';
             const dm = rawNoExt.match(/(?:\b|_|^|@|】|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i);
             if (dm) {
@@ -232,43 +250,45 @@
                 rawNoExt = rawNoExt.replace(dm[0], ' ');
             }
 
+            // 3. 构建清理后的字符串 t
             let t = rawNoExt.toUpperCase().replace(MARKER_REGEX, ' ');
             t = t.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             t = t.replace(GARBAGE_REGEX, ' ').replace(/[\[\]\{\}（）【】]/g, ' ').replace(/[_\.\-\/\\]+/g, ' ');
             t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
 
+            // 4. 番号提取
             let queryCode = null, displayCode = null;
-            const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
-            if (fc2m && fc2m[1]) {
-                queryCode = 'FC2-PPV-' + fc2m[1];
+            const thMatch = rawNoExt.match(/Tokyo[\s_-]*Hot[\s_-]*[nN](\d{3,4})/i);
+            if (thMatch) {
+                const num = thMatch[1].padStart(4, '0');
+                queryCode = `Tokyo-Hot-n${num}`;
                 displayCode = queryCode;
             } else {
-                const tokyoM = t.match(/\b([NHK][-_ ]?\d{4})\b/i);
-                if (tokyoM) {
-                    queryCode = tokyoM[1].toUpperCase().replace(/[-_ ]/g, '');
-                    displayCode = 'TokyoHot-' + queryCode;
+                const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
+                if (fc2m && fc2m[1]) {
+                    queryCode = 'FC2-PPV-' + fc2m[1];
+                    displayCode = queryCode;
                 } else {
                     const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
                     if (numM) {
                         queryCode = `${numM[1]}_${numM[2]}`;
-                        if (/1pon/i.test(rawNoExt)) displayCode = `1pondo-${numM[1]}-${numM[2]}`;
-                        else if (/carib/i.test(rawNoExt)) displayCode = `Caribbean-${numM[1]}-${numM[2]}`;
-                        else if (/paco/i.test(rawNoExt)) displayCode = `Pacopacomama-${numM[1]}-${numM[2]}`;
-                        else if (/heydouga/i.test(rawNoExt)) displayCode = `Heydouga-${numM[1]}-${numM[2]}`;
-                        else if (/tokyo/i.test(rawNoExt)) displayCode = `TokyoHot-${numM[1]}-${numM[2]}`;
+                        const lowerRaw = rawNoExt.toLowerCase();
+                        if (/1pon/i.test(lowerRaw)) displayCode = `1pondo-${numM[1]}-${numM[2]}`;
+                        else if (/carib/i.test(lowerRaw)) displayCode = `Caribbean-${numM[1]}-${numM[2]}`;
+                        else if (/paco/i.test(lowerRaw)) displayCode = `Pacopacomama-${numM[1]}-${numM[2]}`;
+                        else if (/heydouga/i.test(lowerRaw)) displayCode = `Heydouga-${numM[1]}-${numM[2]}`;
+                        else if (/tokyo/i.test(lowerRaw)) displayCode = `TokyoHot-${numM[1]}-${numM[2]}`;
                         else { queryCode = `${numM[1]}-${numM[2]}`; displayCode = queryCode; }
                     } else {
                         queryCode = matchCodeByPrefix(t);
                         if (queryCode) displayCode = queryCode;
-                        else {
-                            const rm = t.match(/\b([A-Z]{2,6})[-_ ]?0*(\d{2,5})\b/);
-                            if (rm) { queryCode = `${rm[1]}-${Number(rm[2]).toString().padStart(3, '0')}`; displayCode = queryCode; }
-                        }
                     }
                 }
             }
             if (!queryCode) return null;
+            const baseCode = displayCode || queryCode;
 
+            // 5. 补充标记
             const safeB = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
             if (raw.indexOf("中文") !== -1 || new RegExp(safeB + "[_-](UC|C)\\b", "i").test(raw)) {
                 if (!markers.includes('中文字幕')) markers.push('中文字幕');
@@ -277,34 +297,44 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            let part = '';
-            let baseRegexStr;
-            if (queryCode.startsWith('FC2-PPV-')) {
-                baseRegexStr = '(?:\\b|\\d{0,3})(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]?0*' + queryCode.split('-')[2];
-            } else if (displayCode.startsWith('TokyoHot-')) {
-                baseRegexStr = '(?:\\b|\\d{0,3})(?:TOKYO[-_ ]*HOT[-_ ]*)?0*' + queryCode;
-            } else if (displayCode.match(/^[a-zA-Z]+-\d{6}-\d{3}$/)) {
-                baseRegexStr = '(?:\\b|\\d{0,3})(?:1pondo|carib(?:bean)?|pacopacomama|heydouga|tokyohot)?[-_ ]*' + displayCode.split('-').slice(1).join('[-_ ]*0*');
-            } else {
-                const parts = queryCode.split(/[-_]/);
-                baseRegexStr = '(?:\\b|\\d{0,3})' + parts[0] + '[-_ ]?0*' + (parts[1] || '');
+            // 6. 移除番号所有变体 (构建 cleanTitle)
+            let cleanTitle = rawNoExt;
+            cleanTitle = cleanTitle.replace(MARKER_REGEX, ' ');
+            cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
+            const mCode = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
+            if (mCode) {
+                const p = mCode[1], n = mCode[2];
+                const regexList = [
+                    new RegExp(`\\b${p}[-_ .]?0*${n}\\b`, 'gi'),
+                    new RegExp(`\\b${p}\\s+0*${n}\\b`, 'gi'),
+                    new RegExp(`\\b${p}${n}\\b`, 'gi')
+                ];
+                regexList.forEach(r => cleanTitle = cleanTitle.replace(r, ' '));
             }
-            const pRegex = new RegExp(baseRegexStr + '(?:[-_\\s.]*(?:part|pt|cd|ep|sp|disc)[-_.\\s]*([a-zA-Z]{1,2}|\\d{1,3})|[-_\\s]+([a-zA-Z]{1,2}|\\d{1,3})|\\s*[\\(\\[\\{]([a-zA-Z]{1,2}|\\d{1,3})[\\)\\]\\}]|\\s*\\.\\s*([a-zA-Z]{1,2}|\\d{1,3}))(?=\\s|$|\\.|-|_|【)', 'i');
-            const pm = rawNoExt.match(pRegex);
-            if (pm) part = (pm[1] || pm[2] || pm[3] || pm[4]).toUpperCase();
-            const fullCode = part ? `${displayCode}-${part}` : displayCode;
+            // Tokyo-Hot 特殊处理
+            if (/^Tokyo[-_\s]*Hot[-_\s]*[nN]/.test(baseCode)) {
+                const tn = baseCode.match(/\d{3,4}$/)[0];
+                cleanTitle = cleanTitle.replace(new RegExp(`\\bTokyo\\s*[-_\\s]*Hot\\s*[-_\\s]*[nN]?\\s*0*${tn}\\b`, 'gi'), ' ');
+            }
 
-            let localTitle = rawNoExt.replace(MARKER_REGEX, ' ');
-            localTitle = localTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/ig, ' ');
-            const se = pm ? pm[0].replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') : baseRegexStr;
-            const codeClean = new RegExp('(?:\\b|^|_|-)\\d{0,3}' + se + '(?:[-_ \\]\\[(){}]*(?:part|pt|cd|ep|sp|disc)?[-_ .]?[A-D0-9]{1,2}[\\]\\[(){}]?)?(?=\\b|_|$|\\.)', 'gi');
-            localTitle = localTitle.replace(codeClean, ' ');
+            // 7. 分段提取（仅基于关键词）
+            let part = '';
+            const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
+            const pmSeg = cleanTitle.match(partRegex);
+            if (pmSeg) {
+                part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase();
+                cleanTitle = cleanTitle.replace(pmSeg[0], ' ');
+            }
+            const fullCode = part ? `${baseCode}-${part}` : baseCode;
+
+            // 8. 本地标题清洗
+            let localTitle = cleanTitle;
             localTitle = localTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
             localTitle = localTitle.replace(AD_BADGES, ' ');
             localTitle = localTitle.replace(GARBAGE_REGEX, ' ');
             localTitle = localTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-            return { queryCode, baseCode: displayCode, fullCode, markers, date: dateStr, localTitle };
+            return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle };
         } catch (e) {
             console.error('parseVideoInfo error:', e);
             return null;
@@ -710,7 +740,6 @@
         progressBox.init('归档', cnt);
         showPageNotification(`开始归档 ${cnt} 个项目...`, 'info', 3000);
         let processed = 0, success = 0;
-
         const tasks = [];
         $items.each(function () {
             const $it = $(this);
@@ -738,7 +767,6 @@
                 }
             });
         });
-
         runTasksWithLimit(tasks, 3, () => {
             progressBox.finish();
             showPageNotification(`归档完成：成功 ${success}/${cnt}`, 'success', 5000);
