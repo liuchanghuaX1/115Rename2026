@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.9
-// @description     115视频整理：分段彻底保留｜对比导出精准｜多站改名+归档+评分+备份
+// @version         1.8.10
+// @description     115视频整理：彻底清除标题残留番号｜分段保留｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -230,7 +230,7 @@
         return null;
     };
 
-    // ========== 核心解析（修复分段） ==========
+    // ========== 核心解析 ==========
     const parseVideoInfo = origTitle => {
         try {
             if (!origTitle) return null;
@@ -303,18 +303,15 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // ========== 分段提取（强化） ==========
+            // 分段提取（强化）
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-            // 优先匹配 "番号-数字" 且数字后可以是空格、括号、中文、或结尾
             const directPartRegex = new RegExp(`${escapedBase}[_-](\\d{1,3})(?=[\\s\\]\\[【\\.\\-]|$)`, 'i');
             const directMatch = rawNoExt.match(directPartRegex);
             if (directMatch) {
                 part = directMatch[1];
                 rawNoExt = rawNoExt.replace(directMatch[0], ' ');
             } else {
-                // 再尝试 Part 等关键词
                 const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
                 const pmSeg = rawNoExt.match(partRegex);
                 if (pmSeg) {
@@ -322,10 +319,9 @@
                     rawNoExt = rawNoExt.replace(pmSeg[0], ' ');
                 }
             }
-
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
-            // 本地标题清洗
+            // 本地标题清洗，彻底清除番号残留
             let cleanTitle = removeMarkers(rawNoExt);
             cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
@@ -333,17 +329,42 @@
             cleanTitle = cleanTitle.replace(GARBAGE_REGEX, ' ');
             cleanTitle = cleanTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-            return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
+            // 额外清理：基于 baseCode 移除所有变体
+            const codeMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
+            if (codeMatch) {
+                const prefix = codeMatch[1];
+                const num = codeMatch[2];
+                const rawNum = parseInt(num, 10).toString(); // 去除前导零
+                const regex = new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi');
+                cleanTitle = cleanTitle.replace(regex, ' ').replace(/\s+/g, ' ').trim();
+            }
+
+            return { queryCode, baseCode: displayCode || queryCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
             console.error('parseVideoInfo error:', e);
             return null;
         }
     };
 
+    // 用于净化标题的公共函数
+    const cleanTitleOfCode = (title, baseCode) => {
+        const codeMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
+        if (!codeMatch) return title;
+        const prefix = codeMatch[1];
+        const num = codeMatch[2];
+        const rawNum = parseInt(num, 10).toString();
+        const regex = new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi');
+        return title.replace(regex, ' ').replace(/\s+/g, ' ').trim();
+    };
+
     // ========== 构建新名称 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
+        // 清洗 title 中的番号残留
+        let cleanTitle = cleanTitleOfCode(title, vInfo.baseCode);
+        // 再次移除可能残留的标记
+        cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
+
         let name = vInfo.fullCode;
-        let cleanTitle = title.replace(/【[^】]*】/g, '').trim();
         if (cleanTitle) name += ' ' + cleanTitle;
         if (actresses && actresses.length) {
             const actressStr = actresses.join('・');
