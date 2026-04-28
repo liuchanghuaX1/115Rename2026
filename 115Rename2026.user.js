@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.17
+// @version         1.8.18
 // @description     115视频整理：FC2分段识别｜空格修复｜导出优化｜多站改名+归档+评分
 // @author          sonarlee
 // @include         https://115.com/*
@@ -144,9 +144,13 @@
 
     // ========== 域名清理 ==========
     const stripDomainPrefix = (filename) => {
-        let cleaned = filename.replace(/^[a-zA-Z0-9_.-]+:\/\/[^\s@]*@/i, '');
-        cleaned = cleaned.replace(/^[a-zA-Z0-9_.-]+\.[a-zA-Z]{2,}@/i, '');
-        cleaned = cleaned.replace(/^@/, '');
+        // 按 @ 分割，取最后一段，自动丢弃所有广告前缀（例如 JAVman@www.sexinsex.net@真实文件名）
+        const parts = filename.split('@');
+        let cleaned = parts[parts.length - 1].trim();
+        // 如果分割后为空（罕见），回退到原文件名
+        if (!cleaned) cleaned = filename;
+        // 最后移除开头的多余符号（如残留的 @ 或空格）
+        cleaned = cleaned.replace(/^[@\s]+/, '');
         return cleaned;
     };
 
@@ -328,33 +332,35 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // ========== 分段提取（强化） ==========
+            // ========== 分段提取（最终增强版，覆盖 .1 / part1 / vol1 / no1 等） ==========
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-            // 1. 直接数字分段 (如 FC2-PPV-1234567-2)
-            const directPartRegex = new RegExp(`${escapedBase}[_-](\\d{1,3})(?=[\\s\\]\\[【\\.\\-]|$)`, 'i');
-            const directMatch = rawNoExt.match(directPartRegex);
-            if (directMatch) {
-                part = directMatch[1];
-                rawNoExt = rawNoExt.replace(directMatch[0], ' ');
-            } else {
-                // 2. 关键词分段 (Part/Pt/Cd/Ep/Sp)
-                const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
-                const pmSeg = rawNoExt.match(partRegex);
-                if (pmSeg) {
-                    part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase();
-                    rawNoExt = rawNoExt.replace(pmSeg[0], ' ');
-                }
-            }
+            // 统一的分段匹配模式（捕获组 2 或 3 会拿到数字或字母）
+            const segmentPattern = new RegExp(
+                // 模式1: 番号后紧跟 .数字/字母 （如 FC2-123.1）
+                `${escapedBase}\\.(\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])` +
+                // 模式2: 番号后紧跟 _数字/字母 或 -数字/字母 （如 _3, -2）
+                `|${escapedBase}[_\\-](\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])` +
+                // 模式3: 关键词 (part|pt|cd|ep|sp|disc|vol|no|volume) 后接数字/字母
+                `|${escapedBase}\\s+` +
+                `(?:part|pt|cd|ep|sp|disc|vol|no|volume)\\s*[.\\-\\s]*(\\d{1,3}|[a-dA-D])` +
+                // 模式4: 番号后跟空格+数字/字母 （如 FC2-123 1）
+                `|${escapedBase}\\s+(\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])`,
+                'i'
+            );
 
-            // 3. 兜底：番号后紧跟空格 + 数字/字母（如 "FC2-PPV-4025269 1" ≈ "-1"）
-            if (!part) {
-                const suffixMatch = rawNoExt.match(new RegExp(`\\b${escapedBase}\\s+([cC]|[a-dA-D]|\\d{1,3})(?:\\s|\\.|$)`, 'i'));
-                if (suffixMatch) {
-                    part = suffixMatch[1].toUpperCase();
-                    rawNoExt = rawNoExt.replace(suffixMatch[0], ' ').trim();
+            const segMatch = rawNoExt.match(segmentPattern);
+            if (segMatch) {
+                // 收集所有捕获组，第一个非空的即为分段内容
+                for (let i = 1; i < segMatch.length; i++) {
+                    if (segMatch[i]) {
+                        part = segMatch[i].toUpperCase();
+                        break;
+                    }
                 }
+                // 从原始名称中移除匹配到的分段部分
+                rawNoExt = rawNoExt.replace(segMatch[0], ' ').trim();
             }
 
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
