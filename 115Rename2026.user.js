@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.14
+// @version         1.8.15
 // @description     115视频整理：FC2全变体识别｜根治番号与标记重复｜多站改名+归档+评分+备份｜改名后延迟询问导出对比
 // @author          sonarlee
 // @include         https://115.com/*
