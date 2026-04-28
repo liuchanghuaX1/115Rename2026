@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.16
+// @version         1.8.17
 // @description     115视频整理：FC2分段识别｜空格修复｜导出优化｜多站改名+归档+评分
 // @author          sonarlee
 // @include         https://115.com/*
@@ -332,14 +332,14 @@
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-            // 1. 直接数字分段 (如 FC2-PPV-xxx 1)
+            // 1. 直接数字分段 (如 FC2-PPV-1234567-2)
             const directPartRegex = new RegExp(`${escapedBase}[_-](\\d{1,3})(?=[\\s\\]\\[【\\.\\-]|$)`, 'i');
             const directMatch = rawNoExt.match(directPartRegex);
             if (directMatch) {
                 part = directMatch[1];
                 rawNoExt = rawNoExt.replace(directMatch[0], ' ');
             } else {
-                // 关键词分段
+                // 2. 关键词分段 (Part/Pt/Cd/Ep/Sp)
                 const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
                 const pmSeg = rawNoExt.match(partRegex);
                 if (pmSeg) {
@@ -348,7 +348,7 @@
                 }
             }
 
-            // 2. 兜底：空格后紧跟数字或字母（如 "FC2-PPV-4025269 1"）
+            // 3. 兜底：番号后紧跟空格 + 数字/字母（如 "FC2-PPV-4025269 1" ≈ "-1"）
             if (!part) {
                 const suffixMatch = rawNoExt.match(new RegExp(`\\b${escapedBase}\\s+([cC]|[a-dA-D]|\\d{1,3})(?:\\s|\\.|$)`, 'i'));
                 if (suffixMatch) {
@@ -665,18 +665,15 @@
         runTasksWithLimit(wrapped, concurrency, () => {
             progressBox.finish();
             showPageNotification(`所有文件处理完成`, 'success', 5000);
-            setTimeout(() => {
-                if (renameCompareList.length > 0) {
-                    if (confirm('改名已完成，是否导出对比？')) {
-                        const choice = prompt('请选择导出方式：\n1 - 导出为 TXT 文件\n2 - 复制到剪贴板', '1');
-                        if (choice === '1') {
-                            exportCompareToFile(renameCompareList);
-                        } else if (choice === '2') {
-                            copyCompareToClipboard(renameCompareList);
-                        }
+            if (renameCompareList.length > 0) {
+                if (confirm('改名已完成，是否导出对比？')) {
+                    if (confirm('导出为 TXT 文件？\n（确定 = TXT 文件，取消 = 复制到剪贴板）')) {
+                        exportCompareToFile(renameCompareList);
+                    } else {
+                        copyCompareToClipboard(renameCompareList);
                     }
                 }
-            }, 5000);
+            }
         });
     };
 
@@ -703,10 +700,9 @@
         $items.each(function () { const title = $(this).attr("title"); if (title) names.push(title); });
         if (names.length === 0) return;
         const text = names.join('\n');
-        const choice = prompt(`已选中 ${names.length} 个文件，请选择备份方式：\n1 - 导出为 TXT 文件\n2 - 复制到剪贴板\n（其他键取消）`, '1');
-        if (choice === '1') {
+        if (confirm('导出为 TXT 文件？\n（确定 = TXT，取消 = 复制到剪贴板）')) {
             downloadTxt('115_File_Backup.txt', text);
-        } else if (choice === '2') {
+        } else {
             copyToClipboard(text);
         }
     }
