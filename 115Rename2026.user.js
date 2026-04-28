@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.18
-// @description     115视频整理：FC2分段识别｜空格修复｜导出优化｜多站改名+归档+评分
+// @version         1.8.20
+// @description     115视频整理：彻底去广告｜zip/rar等全面支持｜下划线/点号/Vol/No分段｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -142,14 +142,11 @@
     const javdbBase = "https://javdb.com";
     const javdbSearchBase = javdbBase + "/search?q=";
 
-    // ========== 域名清理 ==========
+    // ========== 域名/广告前缀清理（彻底按 @ 分割） ==========
     const stripDomainPrefix = (filename) => {
-        // 按 @ 分割，取最后一段，自动丢弃所有广告前缀（例如 JAVman@www.sexinsex.net@真实文件名）
         const parts = filename.split('@');
         let cleaned = parts[parts.length - 1].trim();
-        // 如果分割后为空（罕见），回退到原文件名
         if (!cleaned) cleaned = filename;
-        // 最后移除开头的多余符号（如残留的 @ 或空格）
         cleaned = cleaned.replace(/^[@\s]+/, '');
         return cleaned;
     };
@@ -258,11 +255,12 @@
         return null;
     };
 
-    // ========== 核心解析 ==========
+    // ========== 核心解析（支持 zip 等扩展名及所有分段） ==========
     const parseVideoInfo = origTitle => {
         try {
             if (!origTitle) return null;
             let raw = String(origTitle);
+            // 更灵活的扩展名剥离（兼容 zip、rar、7z 等）
             let rawNoExt = raw.replace(/\.\w{2,5}$/, '');
             rawNoExt = stripDomainPrefix(rawNoExt);
 
@@ -294,7 +292,6 @@
 
             let queryCode = null, displayCode = null;
 
-            // FC2 优先
             const fc2Code = extractFC2Code(rawNoExt);
             if (fc2Code) {
                 queryCode = fc2Code;
@@ -332,40 +329,28 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // ========== 分段提取（最终增强版，覆盖 .1 / part1 / vol1 / no1 等） ==========
+            // ========== 统一分段提取 ==========
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-            // 统一的分段匹配模式（捕获组 2 或 3 会拿到数字或字母）
             const segmentPattern = new RegExp(
-                // 模式1: 番号后紧跟 .数字/字母 （如 FC2-123.1）
                 `${escapedBase}\\.(\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])` +
-                // 模式2: 番号后紧跟 _数字/字母 或 -数字/字母 （如 _3, -2）
                 `|${escapedBase}[_\\-](\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])` +
-                // 模式3: 关键词 (part|pt|cd|ep|sp|disc|vol|no|volume) 后接数字/字母
                 `|${escapedBase}\\s+` +
                 `(?:part|pt|cd|ep|sp|disc|vol|no|volume)\\s*[.\\-\\s]*(\\d{1,3}|[a-dA-D])` +
-                // 模式4: 番号后跟空格+数字/字母 （如 FC2-123 1）
                 `|${escapedBase}\\s+(\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])`,
                 'i'
             );
-
             const segMatch = rawNoExt.match(segmentPattern);
             if (segMatch) {
-                // 收集所有捕获组，第一个非空的即为分段内容
                 for (let i = 1; i < segMatch.length; i++) {
-                    if (segMatch[i]) {
-                        part = segMatch[i].toUpperCase();
-                        break;
-                    }
+                    if (segMatch[i]) { part = segMatch[i].toUpperCase(); break; }
                 }
-                // 从原始名称中移除匹配到的分段部分
                 rawNoExt = rawNoExt.replace(segMatch[0], ' ').trim();
             }
 
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
-            // 本地标题清洗
+            // 标题清洗
             let cleanTitle = removeMarkers(rawNoExt);
             cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
@@ -399,37 +384,30 @@
         return text.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 构建新名称（修复空格） ==========
+    // ========== 构建新名称 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
         let cleanTitle = removeCodeFromText(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
-
         let name = vInfo.fullCode;
         if (cleanTitle) name += ' ' + cleanTitle;
-
         if (actresses && actresses.length) {
             const actressStr = actresses.join('・');
             if (!name.includes(actressStr)) name += ' ' + actressStr;
         }
-
         if (vInfo.markers && vInfo.markers.length) {
             const uniq = [...new Set(vInfo.markers)].filter(Boolean);
             const existingMarkers = name.match(/【[^】]*】/g) || [];
             const toAdd = uniq.filter(m => !existingMarkers.includes(`【${m}】`));
             if (toAdd.length) name += ' ' + toAdd.map(m => `【${m}】`).join('');
         }
-
         if (dateStr) name += '_' + dateStr;
         if (suffix) name += suffix;
-
-        // 去除多余空格，特别是扩展名前的
         name = name.replace(/\s+/g, ' ').trim();
         name = name.replace(/\s+\./g, '.');
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
     let renameCompareList = [];
-
     const send_115 = (id, name, fh, origFilename, callback) => {
         const fn = name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
         $.post("https://webapi.115.com/files/edit", { fid: id, file_name: fn }, data => {
@@ -443,7 +421,7 @@
         }).fail(() => { showPageNotification(`${fh} 请求失败`, 'error', 3000); if (typeof callback === 'function') callback(); });
     };
 
-    // ========== 多站刮削（完整） ==========
+    // ========== 多站刮削 ==========
     const normDate = d => {
         if (!d) return '';
         const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
@@ -641,7 +619,7 @@
         send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     };
 
-    // ========== 批量处理（优化导出询问） ==========
+    // ========== 批量处理（双确认导出） ==========
     const rename = (call, addDate) => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         const cnt = $items.length;
@@ -673,7 +651,7 @@
             showPageNotification(`所有文件处理完成`, 'success', 5000);
             if (renameCompareList.length > 0) {
                 if (confirm('改名已完成，是否导出对比？')) {
-                    if (confirm('导出为 TXT 文件？\n（确定 = TXT 文件，取消 = 复制到剪贴板）')) {
+                    if (confirm('导出为 TXT 文件？\n（确定 = TXT，取消 = 复制到剪贴板）')) {
                         exportCompareToFile(renameCompareList);
                     } else {
                         copyCompareToClipboard(renameCompareList);
@@ -695,13 +673,10 @@
         copyToClipboard(header + text);
     }
 
-    // ========== 备份文件名（直接选择方式） ==========
+    // ========== 备份文件名（双确认） ==========
     function backupFileNames() {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
-        if ($items.length === 0) {
-            showPageNotification("请先选中要备份的文件", 'info', 3000);
-            return;
-        }
+        if ($items.length === 0) { showPageNotification("请先选中要备份的文件", 'info', 3000); return; }
         const names = [];
         $items.each(function () { const title = $(this).attr("title"); if (title) names.push(title); });
         if (names.length === 0) return;
