@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.15
-// @description     115视频整理：FC2全变体识别｜根治番号与标记重复｜多站改名+归档+评分+备份｜改名后延迟询问导出对比
+// @version         1.8.16
+// @description     115视频整理：FC2分段识别｜空格修复｜导出优化｜多站改名+归档+评分
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -289,6 +289,8 @@
             t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
 
             let queryCode = null, displayCode = null;
+
+            // FC2 优先
             const fc2Code = extractFC2Code(rawNoExt);
             if (fc2Code) {
                 queryCode = fc2Code;
@@ -326,18 +328,38 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
+            // ========== 分段提取（强化） ==========
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+            // 1. 直接数字分段 (如 FC2-PPV-xxx 1)
             const directPartRegex = new RegExp(`${escapedBase}[_-](\\d{1,3})(?=[\\s\\]\\[【\\.\\-]|$)`, 'i');
             const directMatch = rawNoExt.match(directPartRegex);
-            if (directMatch) { part = directMatch[1]; rawNoExt = rawNoExt.replace(directMatch[0], ' '); }
-            else {
+            if (directMatch) {
+                part = directMatch[1];
+                rawNoExt = rawNoExt.replace(directMatch[0], ' ');
+            } else {
+                // 关键词分段
                 const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
                 const pmSeg = rawNoExt.match(partRegex);
-                if (pmSeg) { part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase(); rawNoExt = rawNoExt.replace(pmSeg[0], ' '); }
+                if (pmSeg) {
+                    part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase();
+                    rawNoExt = rawNoExt.replace(pmSeg[0], ' ');
+                }
             }
+
+            // 2. 兜底：空格后紧跟数字或字母（如 "FC2-PPV-4025269 1"）
+            if (!part) {
+                const suffixMatch = rawNoExt.match(new RegExp(`\\b${escapedBase}\\s+([cC]|[a-dA-D]|\\d{1,3})(?:\\s|\\.|$)`, 'i'));
+                if (suffixMatch) {
+                    part = suffixMatch[1].toUpperCase();
+                    rawNoExt = rawNoExt.replace(suffixMatch[0], ' ').trim();
+                }
+            }
+
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
+            // 本地标题清洗
             let cleanTitle = removeMarkers(rawNoExt);
             cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
@@ -371,7 +393,7 @@
         return text.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 构建新名称（强化去重） ==========
+    // ========== 构建新名称（修复空格） ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
         let cleanTitle = removeCodeFromText(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
@@ -394,10 +416,9 @@
         if (dateStr) name += '_' + dateStr;
         if (suffix) name += suffix;
 
-        name = removeCodeFromText(name, vInfo.baseCode);
+        // 去除多余空格，特别是扩展名前的
         name = name.replace(/\s+/g, ' ').trim();
-        if (!name.startsWith(vInfo.fullCode)) name = vInfo.fullCode + ' ' + name;
-
+        name = name.replace(/\s+\./g, '.');
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
@@ -614,7 +635,7 @@
         send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     };
 
-    // ========== 批量处理（含优化导出） ==========
+    // ========== 批量处理（优化导出询问） ==========
     const rename = (call, addDate) => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         const cnt = $items.length;
@@ -644,13 +665,15 @@
         runTasksWithLimit(wrapped, concurrency, () => {
             progressBox.finish();
             showPageNotification(`所有文件处理完成`, 'success', 5000);
-            // 5秒延迟后询问导出对比
             setTimeout(() => {
                 if (renameCompareList.length > 0) {
-                    if (confirm("改名已完成，是否导出改名前后对比？\n\n确定：导出为 TXT\n取消：复制到剪贴板\n（不作选择将自动关闭）")) {
-                        exportCompareToFile(renameCompareList);
-                    } else {
-                        copyCompareToClipboard(renameCompareList);
+                    if (confirm('改名已完成，是否导出对比？')) {
+                        const choice = prompt('请选择导出方式：\n1 - 导出为 TXT 文件\n2 - 复制到剪贴板', '1');
+                        if (choice === '1') {
+                            exportCompareToFile(renameCompareList);
+                        } else if (choice === '2') {
+                            copyCompareToClipboard(renameCompareList);
+                        }
                     }
                 }
             }, 5000);
@@ -669,17 +692,23 @@
         copyToClipboard(header + text);
     }
 
-    // ========== 备份文件名 ==========
+    // ========== 备份文件名（直接选择方式） ==========
     function backupFileNames() {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
-        if ($items.length === 0) { showPageNotification("请先选中要备份的文件", 'info', 3000); return; }
+        if ($items.length === 0) {
+            showPageNotification("请先选中要备份的文件", 'info', 3000);
+            return;
+        }
         const names = [];
         $items.each(function () { const title = $(this).attr("title"); if (title) names.push(title); });
         if (names.length === 0) return;
         const text = names.join('\n');
-        if (confirm(`已选中 ${names.length} 个文件，是否导出为 TXT 文件？\n（点击“取消”将复制到剪贴板）`)) {
+        const choice = prompt(`已选中 ${names.length} 个文件，请选择备份方式：\n1 - 导出为 TXT 文件\n2 - 复制到剪贴板\n（其他键取消）`, '1');
+        if (choice === '1') {
             downloadTxt('115_File_Backup.txt', text);
-        } else { copyToClipboard(text); }
+        } else if (choice === '2') {
+            copyToClipboard(text);
+        }
     }
 
     function downloadTxt(filename, text) {
