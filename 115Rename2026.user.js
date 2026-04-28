@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.8.12
-// @description     115视频整理：粘连识别+FC2标题修复｜分段保留｜多站+归档+评分+备份
+// @version         1.8.14
+// @description     115视频整理：FC2全变体识别｜根治番号与标记重复｜多站改名+归档+评分+备份｜改名后延迟询问导出对比
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -214,20 +214,14 @@
 
     const matchCodeByPrefix = str => {
         if (!str) return null;
-        // 严格边界
         for (const p of CODE_PREFIXES) {
             const m = str.match(new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})\\b`, 'i'));
             if (m) return `${p}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
         }
-        // 粘连匹配：数字后非数字即认为结束
         for (const p of CODE_PREFIXES) {
             const m = str.match(new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})(?![0-9])`, 'i'));
-            if (m) {
-                const num = m[1];
-                return `${p}-${(num === '0' ? '0' : num).padStart(3, '0')}`;
-            }
+            if (m) return `${p}-${(m[1] === '0' ? '0' : m[1]).padStart(3, '0')}`;
         }
-        // FC2 特殊处理已在外部，这里保留兜底
         const loose = str.match(/\b([A-Z]{2,8})\s*0*(\d{2,5})\b/);
         if (loose) {
             const prefix = loose[1];
@@ -235,6 +229,26 @@
                 let num = Number(loose[2]).toString();
                 if (num === '0') num = '0';
                 return `${prefix}-${num.padStart(3, '0')}`;
+            }
+        }
+        return null;
+    };
+
+    // 增强的 FC2 番号提取
+    const extractFC2Code = (str) => {
+        const patterns = [
+            /\bFC2[\s_-]*PPV[\s_-]*(\d{5,7})\b/i,
+            /\bFC2PPV[\s_-]*(\d{5,7})\b/i,
+            /\bFC2[\s_-]+(\d{5,7})\b/i,
+            /\bFC2-(\d{5,7})\b/i,
+            /\bFC2(\d{5,7})\b/i,
+            /\bPPV[\s_-]*(\d{5,7})\b/i,
+            /\bF[\s_-]*(\d{5,7})\b(?!\d)/i,
+        ];
+        for (const regex of patterns) {
+            const m = str.match(regex);
+            if (m && m[1] && !/^(?:HD|HD|SD|X264|X265|H264|H265|HEVC|AVC|AAC|AC3|DTS|FLAC|MP3|MP4|MKV|AVI|WMV|M4V|RMVB|ISO|TS|WATERMARK|RARBG|WEB-DL|WEBRIP|BLURAY|BDREMUX|1440P|1080P|720P|480P)$/i.test(m[1])) {
+                return 'FC2-PPV-' + m[1];
             }
         }
         return null;
@@ -248,7 +262,6 @@
             let rawNoExt = raw.replace(/\.\w{2,5}$/, '');
             rawNoExt = stripDomainPrefix(rawNoExt);
 
-            // 标记提取
             let markers = [];
             rawNoExt.replace(MARKER_PATTERN, (match, p1, offset, full) => {
                 const lower = match.toLowerCase();
@@ -276,12 +289,10 @@
             t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
 
             let queryCode = null, displayCode = null;
-
-            // FC2 优先
-            const fc2m = t.match(/(?:FC2?[-_ ]*PPV|FC[2C]?|PPV|F)[-_ ]*(\d{5,7})/i);
-            if (fc2m && fc2m[1]) {
-                queryCode = 'FC2-PPV-' + fc2m[1];
-                displayCode = queryCode;
+            const fc2Code = extractFC2Code(rawNoExt);
+            if (fc2Code) {
+                queryCode = fc2Code;
+                displayCode = fc2Code;
             } else {
                 const thMatch = rawNoExt.match(/Tokyo[\s_-]*Hot[\s_-]*[nN](\d{3,4})/i);
                 if (thMatch) {
@@ -315,21 +326,15 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // 分段提取
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const directPartRegex = new RegExp(`${escapedBase}[_-](\\d{1,3})(?=[\\s\\]\\[【\\.\\-]|$)`, 'i');
             const directMatch = rawNoExt.match(directPartRegex);
-            if (directMatch) {
-                part = directMatch[1];
-                rawNoExt = rawNoExt.replace(directMatch[0], ' ');
-            } else {
+            if (directMatch) { part = directMatch[1]; rawNoExt = rawNoExt.replace(directMatch[0], ' '); }
+            else {
                 const partRegex = /(?:[-_\s.]*(part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D])|[-_\s.]+(?:part|pt|cd|disc|ep|sp)\s*[-_.\s]*(\d{1,3}|[a-dA-D]))/i;
                 const pmSeg = rawNoExt.match(partRegex);
-                if (pmSeg) {
-                    part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase();
-                    rawNoExt = rawNoExt.replace(pmSeg[0], ' ');
-                }
+                if (pmSeg) { part = (pmSeg[2] || pmSeg[3] || pmSeg[4])?.toUpperCase(); rawNoExt = rawNoExt.replace(pmSeg[0], ' '); }
             }
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
@@ -339,23 +344,7 @@
             cleanTitle = cleanTitle.replace(AD_BADGES, ' ');
             cleanTitle = cleanTitle.replace(GARBAGE_REGEX, ' ');
             cleanTitle = cleanTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-
-            // 强力清除番号残留（包含 FC2 的变体）
-            if (baseCode.startsWith('FC2-PPV-')) {
-                const num = baseCode.split('-')[2];
-                cleanTitle = cleanTitle.replace(new RegExp(`FC2[-_\\s]*PPV[-_\\s]*${num}`, 'gi'), ' ');
-                cleanTitle = cleanTitle.replace(new RegExp(`\\b${num}\\b`, 'g'), ' ');
-                cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim();
-            } else {
-                const codeMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
-                if (codeMatch) {
-                    const prefix = codeMatch[1];
-                    const num = codeMatch[2];
-                    const rawNum = parseInt(num, 10).toString();
-                    const regex = new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi');
-                    cleanTitle = cleanTitle.replace(regex, ' ').replace(/\s+/g, ' ').trim();
-                }
-            }
+            cleanTitle = removeCodeFromText(cleanTitle, baseCode);
 
             return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
@@ -364,41 +353,56 @@
         }
     };
 
-    const cleanTitleOfCode = (title, baseCode) => {
-        if (baseCode.startsWith('FC2-PPV-')) {
-            const num = baseCode.split('-')[2];
-            title = title.replace(new RegExp(`FC2[-_\\s]*PPV[-_\\s]*${num}`, 'gi'), ' ');
-            title = title.replace(new RegExp(`\\b${num}\\b`, 'g'), ' ');
-            return title.replace(/\s+/g, ' ').trim();
+    const removeCodeFromText = (text, baseCode) => {
+        if (!baseCode) return text;
+        const stdMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
+        if (stdMatch) {
+            const prefix = stdMatch[1];
+            const num = stdMatch[2];
+            const rawNum = parseInt(num, 10).toString();
+            text = text.replace(new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi'), ' ');
         }
-        const codeMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
-        if (!codeMatch) return title;
-        const prefix = codeMatch[1];
-        const num = codeMatch[2];
-        const rawNum = parseInt(num, 10).toString();
-        const regex = new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi');
-        return title.replace(regex, ' ').replace(/\s+/g, ' ').trim();
+        if (/^FC2[-_\s]?PPV[-_\s]?\d+$/i.test(baseCode)) {
+            const num = baseCode.match(/\d+$/)[0];
+            const rawNum = parseInt(num, 10).toString();
+            const fc2Regex = new RegExp(`\\b(?:FC2[-_\\s.]?(?:PPV[-_\\s.]?)?0*${rawNum}|PPV[-_\\s.]?0*${rawNum})\\b`, 'gi');
+            text = text.replace(fc2Regex, ' ');
+        }
+        return text.replace(/\s+/g, ' ').trim();
     };
 
+    // ========== 构建新名称（强化去重） ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
-        let cleanTitle = cleanTitleOfCode(title, vInfo.baseCode);
+        let cleanTitle = removeCodeFromText(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
+
         let name = vInfo.fullCode;
         if (cleanTitle) name += ' ' + cleanTitle;
+
         if (actresses && actresses.length) {
             const actressStr = actresses.join('・');
-            if (!cleanTitle.includes(actressStr)) name += ' ' + actressStr;
+            if (!name.includes(actressStr)) name += ' ' + actressStr;
         }
+
         if (vInfo.markers && vInfo.markers.length) {
             const uniq = [...new Set(vInfo.markers)].filter(Boolean);
-            if (uniq.length) name += ' ' + uniq.map(m => `【${m}】`).join('');
+            const existingMarkers = name.match(/【[^】]*】/g) || [];
+            const toAdd = uniq.filter(m => !existingMarkers.includes(`【${m}】`));
+            if (toAdd.length) name += ' ' + toAdd.map(m => `【${m}】`).join('');
         }
+
         if (dateStr) name += '_' + dateStr;
         if (suffix) name += suffix;
+
+        name = removeCodeFromText(name, vInfo.baseCode);
+        name = name.replace(/\s+/g, ' ').trim();
+        if (!name.startsWith(vInfo.fullCode)) name = vInfo.fullCode + ' ' + name;
+
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
     let renameCompareList = [];
+
     const send_115 = (id, name, fh, origFilename, callback) => {
         const fn = name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
         $.post("https://webapi.115.com/files/edit", { fid: id, file_name: fn }, data => {
@@ -412,7 +416,7 @@
         }).fail(() => { showPageNotification(`${fh} 请求失败`, 'error', 3000); if (typeof callback === 'function') callback(); });
     };
 
-    // ========== 多站刮削 ==========
+    // ========== 多站刮削（完整） ==========
     const normDate = d => {
         if (!d) return '';
         const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
@@ -610,7 +614,7 @@
         send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     };
 
-    // ========== 批量处理 ==========
+    // ========== 批量处理（含优化导出） ==========
     const rename = (call, addDate) => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         const cnt = $items.length;
@@ -640,49 +644,48 @@
         runTasksWithLimit(wrapped, concurrency, () => {
             progressBox.finish();
             showPageNotification(`所有文件处理完成`, 'success', 5000);
-            setTimeout(() => { if (renameCompareList.length > 0 && confirm("改名已完成，是否导出改名前后对比？")) exportCompare(renameCompareList); }, 500);
+            // 5秒延迟后询问导出对比
+            setTimeout(() => {
+                if (renameCompareList.length > 0) {
+                    if (confirm("改名已完成，是否导出改名前后对比？\n\n确定：导出为 TXT\n取消：复制到剪贴板\n（不作选择将自动关闭）")) {
+                        exportCompareToFile(renameCompareList);
+                    } else {
+                        copyCompareToClipboard(renameCompareList);
+                    }
+                }
+            }, 5000);
         });
     };
 
-    function exportCompare(list) {
+    function exportCompareToFile(list) {
         const text = list.map(item => `${item.original}\t${item.new}`).join('\n');
         const header = '【旧文件名】\t【新文件名】\n';
-        if (confirm("是否导出为 TXT 文件？\n（点击“取消”将复制到剪贴板）")) {
-            downloadTxt('Rename_Compare.txt', header + text);
-        } else {
-            copyToClipboard(header + text);
-        }
+        downloadTxt('Rename_Compare.txt', header + text);
+    }
+
+    function copyCompareToClipboard(list) {
+        const text = list.map(item => `${item.original}\t${item.new}`).join('\n');
+        const header = '【旧文件名】\t【新文件名】\n';
+        copyToClipboard(header + text);
     }
 
     // ========== 备份文件名 ==========
     function backupFileNames() {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
-        if ($items.length === 0) {
-            showPageNotification("请先选中要备份的文件", 'info', 3000);
-            return;
-        }
+        if ($items.length === 0) { showPageNotification("请先选中要备份的文件", 'info', 3000); return; }
         const names = [];
-        $items.each(function () {
-            const title = $(this).attr("title");
-            if (title) names.push(title);
-        });
+        $items.each(function () { const title = $(this).attr("title"); if (title) names.push(title); });
         if (names.length === 0) return;
         const text = names.join('\n');
         if (confirm(`已选中 ${names.length} 个文件，是否导出为 TXT 文件？\n（点击“取消”将复制到剪贴板）`)) {
             downloadTxt('115_File_Backup.txt', text);
-        } else {
-            copyToClipboard(text);
-        }
+        } else { copyToClipboard(text); }
     }
 
     function downloadTxt(filename, text) {
         const blob = new Blob([text], { type: 'text/plain' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
         showPageNotification('TXT 文件已下载', 'success', 3000);
     }
 
@@ -690,10 +693,7 @@
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text).then(() => showPageNotification('已复制到剪贴板', 'success', 3000))
                 .catch(() => { GM_setClipboard(text); showPageNotification('已复制到剪贴板', 'success', 3000); });
-        } else {
-            GM_setClipboard(text);
-            showPageNotification('已复制到剪贴板', 'success', 3000);
-        }
+        } else { GM_setClipboard(text); showPageNotification('已复制到剪贴板', 'success', 3000); }
     }
 
     // ========== 归档功能 ==========
