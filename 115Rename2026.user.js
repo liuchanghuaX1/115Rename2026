@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.9.5
-// @description     115视频整理：分段绝不丢失｜@前缀清除｜番号不重复｜多站改名+归档+评分+备份
+// @version         1.9.6
+// @description     115视频整理：彻底修复分段丢失｜Part1→-1｜@前缀清除｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -148,6 +148,16 @@
         return idx === -1 ? filename : filename.substring(idx + 1).trim();
     };
 
+    // ========== 扩展名安全提取（只取最后一段合理的扩展名，避免 .part4 被误判） ==========
+    const getSafeSuffix = (filename) => {
+        // 匹配最后一个点后面的合法扩展名 (2-5 个字母，不能全是数字)
+        const m = filename.match(/\.([a-z0-9]{2,5})$/i);
+        if (m && !/^\d+$/.test(m[1])) {
+            return m[0]; // 包含点
+        }
+        return '';
+    };
+
     // ========== 垃圾词与标记 ==========
     const GARBAGE_WORDS = [
         'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
@@ -251,7 +261,7 @@
         return null;
     };
 
-    // 仅清除标题中非分段部分的番号变体（安全版，绝不伤及part1等分段标记）
+    // 安全清除标题中的番号变体（不触碰分段部分）
     const removeCodeFromTitle = (str, baseCode) => {
         if (!baseCode) return str;
         const stdMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
@@ -281,13 +291,14 @@
         return str.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 核心解析 ==========
-    const parseVideoInfo = origTitle => {
+    // ========== 核心解析（正确提取分段，不依赖扩展名） ==========
+    const parseVideoInfo = (origTitle, safeSuffix) => {
         try {
             if (!origTitle) return null;
             let raw = String(origTitle);
             raw = stripDomainPrefix(raw);
-            let rawForCode = raw;
+            // 去掉安全后缀（如果有）以避免干扰分段提取
+            let rawForCode = safeSuffix ? raw.slice(0, raw.lastIndexOf(safeSuffix)) : raw;
 
             let markers = [];
             rawForCode.replace(MARKER_PATTERN, (match, p1, offset, full) => {
@@ -354,31 +365,30 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // ========== 分段提取（强化） ==========
+            // ========== 分段提取（终极强化） ==========
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // 1. 精确匹配关键词分段（part、pt、cd 等）
-            const keywordPartRegex = new RegExp(
-                `${escapedBase}\\s*(?:[._\\s-]*(?:part|pt|cd|ep|sp|disc|vol|no|volume)[\\s._-]*(\\d{1,3}|[a-dA-D])\\b)`,
+
+            // 1. 关键词：part / pt / cd / disc / ep / sp / vol / no
+            const keywordRegex = new RegExp(
+                `${escapedBase}[\\s._-]*(?:part|pt|cd|disc|ep|sp|vol|no|volume)[\\s._-]*(\\d{1,3}|[a-dA-D])\\b`,
                 'i'
             );
-            const kwMatch = rawForCode.match(keywordPartRegex);
-            if (kwMatch) {
-                part = kwMatch[1].toUpperCase();
-                rawForCode = rawForCode.replace(kwMatch[0], ' ').trim();
+            let m = rawForCode.match(keywordRegex);
+            if (m) {
+                part = m[1].toUpperCase();
+                rawForCode = rawForCode.replace(m[0], ' ').trim();
             } else {
-                // 2. 匹配 _数字 或 -数字 格式，但数字后不能紧跟字母（防止误判如 _4K）
-                const directPartRegex = new RegExp(
+                // 2. 独立数字：番号后紧跟 _数字 或 -数字 或 .数字 (但数字后不能紧跟字母)
+                const numRegex = new RegExp(
                     `${escapedBase}[_\\-](\\d{1,3})(?![a-zA-Z])` +
                     `|${escapedBase}\\.(\\d{1,3})(?![a-zA-Z0-9])`,
                     'i'
                 );
-                const segMatch = rawForCode.match(directPartRegex);
-                if (segMatch) {
-                    for (let i = 1; i < segMatch.length; i++) {
-                        if (segMatch[i]) { part = segMatch[i].toUpperCase(); break; }
-                    }
-                    rawForCode = rawForCode.replace(segMatch[0], ' ').trim();
+                const nm = rawForCode.match(numRegex);
+                if (nm) {
+                    part = (nm[1] || nm[2]).toUpperCase();
+                    rawForCode = rawForCode.replace(nm[0], ' ').trim();
                 }
             }
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
@@ -640,13 +650,18 @@
             const $it = $(this);
             const fn = $it.attr("title");
             const ft = $it.attr("file_type");
-            let fid, suffix = '';
-            if (ft === "0") fid = $it.attr("cate_id");
-            else { fid = $it.attr("file_id"); const idx = fn.lastIndexOf('.'); if (idx !== -1) suffix = fn.substring(idx); }
+            let fid;
+            // 安全提取后缀
+            const safeSuffix = getSafeSuffix(fn);
+            if (ft === "0") {
+                fid = $it.attr("cate_id");
+            } else {
+                fid = $it.attr("file_id");
+            }
             if (!fid || !fn) return;
-            const vi = parseVideoInfo(fn);
+            const vi = parseVideoInfo(fn, safeSuffix);
             if (!vi) return;
-            tasks.push((done) => { call(fid, vi, suffix, addDate, done, fn); });
+            tasks.push((done) => { call(fid, vi, safeSuffix, addDate, done, fn); });
         });
 
         const concurrency = isLocal ? 5 : 3;
@@ -790,7 +805,8 @@
             const $it = $(this); const fn = $it.attr("title"); const ft = $it.attr("file_type");
             let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
             if (!fid || !fn) return;
-            const vi = parseVideoInfo(fn);
+            const safeSuffix = getSafeSuffix(fn);
+            const vi = parseVideoInfo(fn, safeSuffix);
             if (!vi) { processed++; progressBox.update(processed); return; }
             const series = getSeriesFromCode(vi);
             if ((mode === "2" || mode === "3") && !series) { showPageNotification(`无法识别 ${vi.queryCode} 的系列，跳过`, 'error', 2500); processed++; progressBox.update(processed); return; }
@@ -817,7 +833,8 @@
             const $it = $(this); const fn = $it.attr("title"); const ft = $it.attr("file_type");
             let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
             if (!fid || !fn) return;
-            const vi = parseVideoInfo(fn);
+            const safeSuffix = getSafeSuffix(fn);
+            const vi = parseVideoInfo(fn, safeSuffix);
             if (!vi || !vi.queryCode) return;
             tasks.push(done => {
                 requestJavdbRating(fid, vi.queryCode, fn, ok => { processed++; if (ok) success++; progressBox.update(processed); done(); });
