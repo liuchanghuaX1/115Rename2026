@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.9.4
-// @description     115视频整理：分段逻辑与本地加工完全一致｜绝不误删标记｜@前缀清除｜多站改名+归档+评分+备份
+// @version         1.9.5
+// @description     115视频整理：分段绝不丢失｜@前缀清除｜番号不重复｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -232,7 +232,6 @@
         return null;
     };
 
-    // 增强的 FC2 番号提取
     const extractFC2Code = (str) => {
         const patterns = [
             /\bFC2[\s_-]*PPV[\s_-]*(\d{5,7})\b/i,
@@ -252,19 +251,20 @@
         return null;
     };
 
-    // 根除标题中所有番号变体（仅在标题清洗时使用）
-    const removeAllCodeVariants = (str, baseCode) => {
+    // 仅清除标题中非分段部分的番号变体（安全版，绝不伤及part1等分段标记）
+    const removeCodeFromTitle = (str, baseCode) => {
         if (!baseCode) return str;
         const stdMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
         if (stdMatch) {
             const prefix = stdMatch[1];
             const rawNum = parseInt(stdMatch[2], 10).toString();
-            str = str.replace(new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi'), ' ');
+            str = str.replace(new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}(?![_\\s.-]*[a-zA-Z]\\d)`, 'gi'), ' ');
         }
         if (/^FC2[-_\s]?PPV[-_\s]?\d+$/i.test(baseCode)) {
             const num = baseCode.match(/\d+$/)[0];
             const rawNum = parseInt(num, 10).toString();
-            str = str.replace(new RegExp(`\\b(?:FC2[-_\\s.]?(?:PPV[-_\\s.]?)?0*${rawNum}|PPV[-_\\s.]?0*${rawNum})\\b`, 'gi'), ' ');
+            const fc2Regex = new RegExp(`\\b(?:FC2[-_\\s.]?(?:PPV[-_\\s.]?)?0*${rawNum}|PPV[-_\\s.]?0*${rawNum})(?![_\\s.-]*[a-zA-Z]\\d)`, 'gi');
+            str = str.replace(fc2Regex, ' ');
         }
         const thMatch = baseCode.match(/^Tokyo[-_\s]*Hot[-_\s]*[nN](\d{3,4})$/i);
         if (thMatch) {
@@ -274,14 +274,14 @@
                 `\\b(?:Tokyo\\s*[-_\\s]*Hot\\s*[-_\\s]*[nN]?\\s*0*${rawNum}|` +
                 `TokyoHotn?${rawNum}|` +
                 `Hotn?${rawNum})` +
-                `(?:\\s*Tokyo|\\s*Hot|\\s*FHD|\\s*HD)?\\b`,
+                `(?![_\\s.-]*[a-zA-Z]\\d)`,
                 'gi'
             ), ' ');
         }
         return str.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 核心解析（修复分段误判） ==========
+    // ========== 核心解析 ==========
     const parseVideoInfo = origTitle => {
         try {
             if (!origTitle) return null;
@@ -354,63 +354,43 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // ========== 分段提取（彻底重写，与本地加工一致） ==========
+            // ========== 分段提取（强化） ==========
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-            // 1. 关键词分段（Part/Pt/Cd/Ep/Sp/Disc/Vol/No/Volume），保留数字或字母
-            const keywordRegex = new RegExp(
-                `${escapedBase}\\s+(part|pt|cd|ep|sp|disc|vol|no|volume)\\s*[.\\-\\s]*(\\d{1,3}|[a-dA-D])\\b`,
+            // 1. 精确匹配关键词分段（part、pt、cd 等）
+            const keywordPartRegex = new RegExp(
+                `${escapedBase}\\s*(?:[._\\s-]*(?:part|pt|cd|ep|sp|disc|vol|no|volume)[\\s._-]*(\\d{1,3}|[a-dA-D])\\b)`,
                 'i'
             );
-            const keywordMatch = rawForCode.match(keywordRegex);
-            if (keywordMatch) {
-                part = keywordMatch[2].toUpperCase();
-                rawForCode = rawForCode.replace(keywordMatch[0], ' ').trim();
-            }
-
-            // 2. 如果无关键词，检查番号后紧跟 _数字 或 -数字，且数字后不能是字母（避免 4K、60fps 等）
-            if (!part) {
-                const directRegex = new RegExp(
-                    `${escapedBase}[_\\-](\\d{1,3})\\b(?!\\s*[a-zA-Z])`,
+            const kwMatch = rawForCode.match(keywordPartRegex);
+            if (kwMatch) {
+                part = kwMatch[1].toUpperCase();
+                rawForCode = rawForCode.replace(kwMatch[0], ' ').trim();
+            } else {
+                // 2. 匹配 _数字 或 -数字 格式，但数字后不能紧跟字母（防止误判如 _4K）
+                const directPartRegex = new RegExp(
+                    `${escapedBase}[_\\-](\\d{1,3})(?![a-zA-Z])` +
+                    `|${escapedBase}\\.(\\d{1,3})(?![a-zA-Z0-9])`,
                     'i'
                 );
-                const directMatch = rawForCode.match(directRegex);
-                if (directMatch) {
-                    // 进一步确认数字后不是常见的标记字符（K, fps, p 等）
-                    const after = rawForCode.substring(directMatch.index + directMatch[0].length);
-                    if (!/^[a-zA-Z]/.test(after.trimStart())) {
-                        part = directMatch[1];
-                        rawForCode = rawForCode.replace(directMatch[0], ' ').trim();
+                const segMatch = rawForCode.match(directPartRegex);
+                if (segMatch) {
+                    for (let i = 1; i < segMatch.length; i++) {
+                        if (segMatch[i]) { part = segMatch[i].toUpperCase(); break; }
                     }
+                    rawForCode = rawForCode.replace(segMatch[0], ' ').trim();
                 }
             }
-
-            // 3. 如果没有，检查番号后跟空格 + 数字/字母（如 " 1", " C"），且之后不能紧跟字母
-            if (!part) {
-                const spaceRegex = new RegExp(
-                    `${escapedBase}\\s+(\\d{1,3}|[a-dA-D])\\b(?!\\s*[a-zA-Z])`,
-                    'i'
-                );
-                const spaceMatch = rawForCode.match(spaceRegex);
-                if (spaceMatch) {
-                    const after = rawForCode.substring(spaceMatch.index + spaceMatch[0].length);
-                    if (!/^[a-zA-Z]/.test(after.trimStart())) {
-                        part = spaceMatch[1].toUpperCase();
-                        rawForCode = rawForCode.replace(spaceMatch[0], ' ').trim();
-                    }
-                }
-            }
-
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
+            // 标题清洗
             let cleanTitle = removeMarkers(rawForCode);
             cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
             cleanTitle = cleanTitle.replace(AD_BADGES, ' ');
             cleanTitle = cleanTitle.replace(GARBAGE_REGEX, ' ');
             cleanTitle = cleanTitle.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-            cleanTitle = removeAllCodeVariants(cleanTitle, baseCode);
+            cleanTitle = removeCodeFromTitle(cleanTitle, baseCode);
 
             return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
@@ -421,7 +401,7 @@
 
     // ========== 构建新名称 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
-        let cleanTitle = removeAllCodeVariants(title, vInfo.baseCode);
+        let cleanTitle = removeCodeFromTitle(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
         let name = vInfo.fullCode;
         if (cleanTitle) name += ' ' + cleanTitle;
@@ -721,7 +701,7 @@
         } else { GM_setClipboard(text); showPageNotification('已复制到剪贴板', 'success', 3000); }
     }
 
-    // ========== 归档功能（保持不变） ==========
+    // ========== 归档功能 ==========
     const getSeriesFromCode = code => {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
         if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
@@ -899,6 +879,7 @@
         }
     };
 
+    // ========== 菜单绑定 ==========
     function buttonInterval() {
         const $menu = $("div#js_float_content");
         if ($menu.length === 0) return;
