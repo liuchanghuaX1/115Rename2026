@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.9.3
-// @description     115视频整理：彻底清除@前缀｜不碰扩展名｜修复番号丢失｜多站改名+归档+评分+备份
+// @version         1.9.4
+// @description     115视频整理：分段逻辑与本地加工完全一致｜绝不误删标记｜@前缀清除｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -252,7 +252,7 @@
         return null;
     };
 
-    // 根除标题中所有番号变体（仅在标题清洗时使用，不用于最终全名）
+    // 根除标题中所有番号变体（仅在标题清洗时使用）
     const removeAllCodeVariants = (str, baseCode) => {
         if (!baseCode) return str;
         const stdMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
@@ -281,7 +281,7 @@
         return str.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 核心解析 ==========
+    // ========== 核心解析（修复分段误判） ==========
     const parseVideoInfo = origTitle => {
         try {
             if (!origTitle) return null;
@@ -354,23 +354,54 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
+            // ========== 分段提取（彻底重写，与本地加工一致） ==========
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const segmentPattern = new RegExp(
-                `${escapedBase}\\.(\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])` +
-                `|${escapedBase}[_\\-](\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])` +
-                `|${escapedBase}\\s+` +
-                `(?:part|pt|cd|ep|sp|disc|vol|no|volume)\\s*[.\\-\\s]*(\\d{1,3}|[a-dA-D])` +
-                `|${escapedBase}\\s+(\\d{1,3}|[a-dA-D])(?=\\s|$|\\.\\w+$|[^\\d])`,
+
+            // 1. 关键词分段（Part/Pt/Cd/Ep/Sp/Disc/Vol/No/Volume），保留数字或字母
+            const keywordRegex = new RegExp(
+                `${escapedBase}\\s+(part|pt|cd|ep|sp|disc|vol|no|volume)\\s*[.\\-\\s]*(\\d{1,3}|[a-dA-D])\\b`,
                 'i'
             );
-            const segMatch = rawForCode.match(segmentPattern);
-            if (segMatch) {
-                for (let i = 1; i < segMatch.length; i++) {
-                    if (segMatch[i]) { part = segMatch[i].toUpperCase(); break; }
-                }
-                rawForCode = rawForCode.replace(segMatch[0], ' ').trim();
+            const keywordMatch = rawForCode.match(keywordRegex);
+            if (keywordMatch) {
+                part = keywordMatch[2].toUpperCase();
+                rawForCode = rawForCode.replace(keywordMatch[0], ' ').trim();
             }
+
+            // 2. 如果无关键词，检查番号后紧跟 _数字 或 -数字，且数字后不能是字母（避免 4K、60fps 等）
+            if (!part) {
+                const directRegex = new RegExp(
+                    `${escapedBase}[_\\-](\\d{1,3})\\b(?!\\s*[a-zA-Z])`,
+                    'i'
+                );
+                const directMatch = rawForCode.match(directRegex);
+                if (directMatch) {
+                    // 进一步确认数字后不是常见的标记字符（K, fps, p 等）
+                    const after = rawForCode.substring(directMatch.index + directMatch[0].length);
+                    if (!/^[a-zA-Z]/.test(after.trimStart())) {
+                        part = directMatch[1];
+                        rawForCode = rawForCode.replace(directMatch[0], ' ').trim();
+                    }
+                }
+            }
+
+            // 3. 如果没有，检查番号后跟空格 + 数字/字母（如 " 1", " C"），且之后不能紧跟字母
+            if (!part) {
+                const spaceRegex = new RegExp(
+                    `${escapedBase}\\s+(\\d{1,3}|[a-dA-D])\\b(?!\\s*[a-zA-Z])`,
+                    'i'
+                );
+                const spaceMatch = rawForCode.match(spaceRegex);
+                if (spaceMatch) {
+                    const after = rawForCode.substring(spaceMatch.index + spaceMatch[0].length);
+                    if (!/^[a-zA-Z]/.test(after.trimStart())) {
+                        part = spaceMatch[1].toUpperCase();
+                        rawForCode = rawForCode.replace(spaceMatch[0], ' ').trim();
+                    }
+                }
+            }
+
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
             let cleanTitle = removeMarkers(rawForCode);
@@ -388,33 +419,26 @@
         }
     };
 
-    // ========== 构建新名称（修复番号丢失） ==========
+    // ========== 构建新名称 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
-        // 只清洗标题部分，确保不含番号变体，但保留开头番号
         let cleanTitle = removeAllCodeVariants(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
-
-        let name = vInfo.fullCode;           // 番号已在开头，绝不动它
+        let name = vInfo.fullCode;
         if (cleanTitle) name += ' ' + cleanTitle;
-
         if (actresses && actresses.length) {
             const actressStr = actresses.join('・');
             if (!name.includes(actressStr)) name += ' ' + actressStr;
         }
-
         if (vInfo.markers && vInfo.markers.length) {
             const uniq = [...new Set(vInfo.markers)].filter(Boolean);
             const existingMarkers = name.match(/【[^】]*】/g) || [];
             const toAdd = uniq.filter(m => !existingMarkers.includes(`【${m}】`));
             if (toAdd.length) name += ' ' + toAdd.map(m => `【${m}】`).join('');
         }
-
         if (dateStr) name += '_' + dateStr;
         if (suffix) name += suffix;
-
         name = name.replace(/\s+/g, ' ').trim();
         name = name.replace(/\s+\./g, '.');
-        // 移除之前错误的全局清洗，保留番号
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
@@ -875,7 +899,6 @@
         }
     };
 
-    // ========== 菜单绑定 ==========
     function buttonInterval() {
         const $menu = $("div#js_float_content");
         if ($menu.length === 0) return;
