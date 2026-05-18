@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.9.2
+// @version         1.9.3
 // @description     115视频整理：彻底清除@前缀｜不碰扩展名｜修复番号丢失｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
