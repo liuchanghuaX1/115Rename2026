@@ -2,7 +2,7 @@
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
 // @version         1.9.2
-// @description     115视频整理：彻底清除@前缀｜不碰扩展名｜根除番号重复｜多站改名+归档+评分+备份
+// @description     115视频整理：彻底清除@前缀｜不碰扩展名｜修复番号丢失｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -252,23 +252,20 @@
         return null;
     };
 
-    // 根除标题中所有番号变体（包括 Tokyo-Hot、FC2 所有粘连形式）
+    // 根除标题中所有番号变体（仅在标题清洗时使用，不用于最终全名）
     const removeAllCodeVariants = (str, baseCode) => {
         if (!baseCode) return str;
-        // 标准番号
         const stdMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
         if (stdMatch) {
             const prefix = stdMatch[1];
             const rawNum = parseInt(stdMatch[2], 10).toString();
             str = str.replace(new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}\\b`, 'gi'), ' ');
         }
-        // FC2
         if (/^FC2[-_\s]?PPV[-_\s]?\d+$/i.test(baseCode)) {
             const num = baseCode.match(/\d+$/)[0];
             const rawNum = parseInt(num, 10).toString();
             str = str.replace(new RegExp(`\\b(?:FC2[-_\\s.]?(?:PPV[-_\\s.]?)?0*${rawNum}|PPV[-_\\s.]?0*${rawNum})\\b`, 'gi'), ' ');
         }
-        // Tokyo-Hot
         const thMatch = baseCode.match(/^Tokyo[-_\s]*Hot[-_\s]*[nN](\d{3,4})$/i);
         if (thMatch) {
             const num = thMatch[1].padStart(4, '0');
@@ -284,16 +281,14 @@
         return str.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 核心解析（绝不碰扩展名，优先清除广告前缀） ==========
+    // ========== 核心解析 ==========
     const parseVideoInfo = origTitle => {
         try {
             if (!origTitle) return null;
             let raw = String(origTitle);
-            // 1. 最高优先：删除 @ 左侧所有广告字符
             raw = stripDomainPrefix(raw);
             let rawForCode = raw;
 
-            // 2. 提取独立标记
             let markers = [];
             rawForCode.replace(MARKER_PATTERN, (match, p1, offset, full) => {
                 const lower = match.toLowerCase();
@@ -304,7 +299,6 @@
                 return match;
             });
 
-            // 3. 提取日期
             let dateStr = '';
             const dm = rawForCode.match(/(?:\b|_|^|@|】|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i);
             if (dm) {
@@ -316,13 +310,11 @@
                 rawForCode = rawForCode.replace(dm[0], ' ');
             }
 
-            // 4. 构建清洁字符串用于番号提取
             let t = removeMarkers(rawForCode).toUpperCase();
             t = t.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             t = t.replace(GARBAGE_REGEX, ' ').replace(/[\[\]\{\}（）【】]/g, ' ').replace(/[_\.\-\/\\]+/g, ' ');
             t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
 
-            // 5. 提取番号
             let queryCode = null, displayCode = null;
             const thMatch = rawForCode.match(/Tokyo[\s_-]*Hot[\s_-]*[nN]?(\d{3,4})/i);
             if (thMatch) {
@@ -354,7 +346,6 @@
             if (!queryCode) return null;
             const baseCode = displayCode || queryCode;
 
-            // 6. 补充标记（中文/无码后缀）
             const safeB = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
             if (raw.indexOf("中文") !== -1 || new RegExp(safeB + "[_-](UC|C)\\b", "i").test(raw)) {
                 if (!markers.includes('中文字幕')) markers.push('中文字幕');
@@ -363,7 +354,6 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            // 7. 分段提取（支持点、下划线、空格、关键词）
             let part = '';
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const segmentPattern = new RegExp(
@@ -383,7 +373,6 @@
             }
             const fullCode = part ? `${baseCode}-${part}` : baseCode;
 
-            // 8. 标题清洗（根除所有番号变体）
             let cleanTitle = removeMarkers(rawForCode);
             cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
             cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
@@ -399,39 +388,33 @@
         }
     };
 
-    // ========== 构建新名称（多重去重，确保番号只出现一次） ==========
+    // ========== 构建新名称（修复番号丢失） ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
+        // 只清洗标题部分，确保不含番号变体，但保留开头番号
         let cleanTitle = removeAllCodeVariants(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
-        let name = vInfo.fullCode;
+
+        let name = vInfo.fullCode;           // 番号已在开头，绝不动它
         if (cleanTitle) name += ' ' + cleanTitle;
+
         if (actresses && actresses.length) {
             const actressStr = actresses.join('・');
             if (!name.includes(actressStr)) name += ' ' + actressStr;
         }
+
         if (vInfo.markers && vInfo.markers.length) {
             const uniq = [...new Set(vInfo.markers)].filter(Boolean);
             const existingMarkers = name.match(/【[^】]*】/g) || [];
             const toAdd = uniq.filter(m => !existingMarkers.includes(`【${m}】`));
             if (toAdd.length) name += ' ' + toAdd.map(m => `【${m}】`).join('');
         }
+
         if (dateStr) name += '_' + dateStr;
         if (suffix) name += suffix;
+
         name = name.replace(/\s+/g, ' ').trim();
         name = name.replace(/\s+\./g, '.');
-        // 最终保险：再清除一次残留番号，并确保番号只出现一次
-        name = removeAllCodeVariants(name, vInfo.baseCode);
-        const codeRegex = new RegExp(`\\b${vInfo.baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
-        const matches = name.match(codeRegex);
-        if (matches && matches.length > 1) {
-            let idx = name.indexOf(vInfo.baseCode);
-            if (idx !== -1) {
-                const before = name.substring(0, idx + vInfo.baseCode.length);
-                const after = name.substring(idx + vInfo.baseCode.length).replace(codeRegex, '');
-                name = before + after;
-            }
-        }
-        name = name.replace(/\s+/g, ' ').trim();
+        // 移除之前错误的全局清洗，保留番号
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
@@ -630,16 +613,7 @@
             const newName = buildNewName(vInfo, info.title || vInfo.localTitle, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ""), suffix);
             send_115(fid, newName, vInfo.fullCode, origFilename, callback);
         };
-        fetchJavlib(code, apply, () => {
-            fetchJavbus(code, apply, () => {
-                fetchXslist(code, apply, () => {
-                    fetchJavdb(code, apply, () => {
-                        showPageNotification(`所有信息源未找到 ${code}`, 'error', 4000);
-                        if (typeof callback === 'function') callback();
-                    });
-                });
-            });
-        });
+        fetchJavlib(code, apply, () => { fetchJavbus(code, apply, () => { fetchXslist(code, apply, () => { fetchJavdb(code, apply, () => { showPageNotification(`所有信息源未找到 ${code}`, 'error', 4000); if (typeof callback === 'function') callback(); }); }); }); });
     };
 
     const local_rename = (fid, vInfo, suffix, addDate, callback, origFilename) => {
@@ -681,9 +655,7 @@
                 if (confirm('改名已完成，是否导出对比？')) {
                     if (confirm('导出为 TXT 文件？\n（确定 = TXT，取消 = 复制到剪贴板）')) {
                         exportCompareToFile(renameCompareList);
-                    } else {
-                        copyCompareToClipboard(renameCompareList);
-                    }
+                    } else { copyCompareToClipboard(renameCompareList); }
                 }
             }
         });
@@ -694,14 +666,12 @@
         const header = '【旧文件名】\t【新文件名】\n';
         downloadTxt('Rename_Compare.txt', header + text);
     }
-
     function copyCompareToClipboard(list) {
         const text = list.map(item => `${item.original}\t${item.new}`).join('\n');
         const header = '【旧文件名】\t【新文件名】\n';
         copyToClipboard(header + text);
     }
 
-    // ========== 备份文件名（双确认） ==========
     function backupFileNames() {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         if ($items.length === 0) { showPageNotification("请先选中要备份的文件", 'info', 3000); return; }
@@ -711,9 +681,7 @@
         const text = names.join('\n');
         if (confirm('导出为 TXT 文件？\n（确定 = TXT，取消 = 复制到剪贴板）')) {
             downloadTxt('115_File_Backup.txt', text);
-        } else {
-            copyToClipboard(text);
-        }
+        } else { copyToClipboard(text); }
     }
 
     function downloadTxt(filename, text) {
@@ -722,7 +690,6 @@
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         showPageNotification('TXT 文件已下载', 'success', 3000);
     }
-
     function copyToClipboard(text) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text).then(() => showPageNotification('已复制到剪贴板', 'success', 3000))
@@ -730,87 +697,49 @@
         } else { GM_setClipboard(text); showPageNotification('已复制到剪贴板', 'success', 3000); }
     }
 
-    // ========== 归档功能 ==========
+    // ========== 归档功能（保持不变） ==========
     const getSeriesFromCode = code => {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
         if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
         const m = c.match(/^([A-Z]+)-\d+/);
         return m ? m[1] : null;
     };
-
     const findOrCreateFolderAndMove = (fid, folderName, successCallback, failCallback) => {
         const cid = archiveRootCid || ROOT_DIR_CID;
         const cleanName = folderName.replace(/[\\/:*?"<>|]/g, ' ');
-        if (folderCidCache[cleanName]) {
-            moveFileToFolder(fid, folderCidCache[cleanName], cleanName, successCallback, failCallback);
-            return;
-        }
-        $.get("https://webapi.115.com/files/search", {
-            search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000
-        }, data => {
+        if (folderCidCache[cleanName]) { moveFileToFolder(fid, folderCidCache[cleanName], cleanName, successCallback, failCallback); return; }
+        $.get("https://webapi.115.com/files/search", { search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000 }, data => {
             const result = typeof data === 'string' ? JSON.parse(data) : data;
             if (result.state && result.data && result.data.count > 0) {
                 const found = result.data.list.find(item => item.name === cleanName && item.file_type === "0");
-                if (found) {
-                    folderCidCache[cleanName] = found.cid;
-                    moveFileToFolder(fid, found.cid, cleanName, successCallback, failCallback);
-                    return;
-                }
+                if (found) { folderCidCache[cleanName] = found.cid; moveFileToFolder(fid, found.cid, cleanName, successCallback, failCallback); return; }
             }
             $.post("https://webapi.115.com/files/add", { pid: cid, cname: cleanName }, createData => {
                 const createResult = typeof createData === 'string' ? JSON.parse(createData) : createData;
-                if (createResult.state) {
-                    folderCidCache[cleanName] = createResult.cid;
-                    moveFileToFolder(fid, createResult.cid, cleanName, successCallback, failCallback);
-                } else {
-                    if (createResult.errno === 20004) {
-                        $.get("https://webapi.115.com/files/search", { search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000 }, data2 => {
-                            const res2 = JSON.parse(data2);
-                            const found2 = res2.data && res2.data.list.find(item => item.name === cleanName && item.file_type === "0");
-                            if (found2) {
-                                folderCidCache[cleanName] = found2.cid;
-                                moveFileToFolder(fid, found2.cid, cleanName, successCallback, failCallback);
-                            } else {
-                                showPageNotification(`创建文件夹失败，且未找到同名文件夹`, 'error', 3000);
-                                if (typeof failCallback === 'function') failCallback('重名冲突');
-                            }
-                        });
-                    } else {
-                        showPageNotification(`创建文件夹失败: ${createResult.error || '未知错误'}`, 'error', 3000);
-                        if (typeof failCallback === 'function') failCallback(createResult.error);
-                    }
-                }
-            }).fail(() => {
-                showPageNotification('创建文件夹请求失败', 'error', 3000);
-                if (typeof failCallback === 'function') failCallback('网络错误');
-            });
-        }).fail(() => {
-            showPageNotification('搜索文件夹请求失败', 'error', 3000);
-            if (typeof failCallback === 'function') failCallback('网络错误');
-        });
+                if (createResult.state) { folderCidCache[cleanName] = createResult.cid; moveFileToFolder(fid, createResult.cid, cleanName, successCallback, failCallback); }
+                else if (createResult.errno === 20004) {
+                    $.get("https://webapi.115.com/files/search", { search_value: cleanName, format: "json", aid: "1", cid: cid, file_type: "0", limit: 1000 }, data2 => {
+                        const res2 = JSON.parse(data2);
+                        const found2 = res2.data && res2.data.list.find(item => item.name === cleanName && item.file_type === "0");
+                        if (found2) { folderCidCache[cleanName] = found2.cid; moveFileToFolder(fid, found2.cid, cleanName, successCallback, failCallback); }
+                        else { showPageNotification(`创建文件夹失败，且未找到同名文件夹`, 'error', 3000); if (typeof failCallback === 'function') failCallback('重名冲突'); }
+                    });
+                } else { showPageNotification(`创建文件夹失败: ${createResult.error || '未知错误'}`, 'error', 3000); if (typeof failCallback === 'function') failCallback(createResult.error); }
+            }).fail(() => { showPageNotification('创建文件夹请求失败', 'error', 3000); if (typeof failCallback === 'function') failCallback('网络错误'); });
+        }).fail(() => { showPageNotification('搜索文件夹请求失败', 'error', 3000); if (typeof failCallback === 'function') failCallback('网络错误'); });
     };
-
     const moveFileToFolder = (fid, targetCid, folderName, successCallback, failCallback) => {
         $.post("https://webapi.115.com/files/move", { pid: targetCid, fid: fid }, data => {
             const result = typeof data === 'string' ? JSON.parse(data) : data;
-            if (result.state) {
-                showPageNotification(`已归档到 ${folderName}`, 'success', 2000);
-                if (typeof successCallback === 'function') successCallback();
-            } else {
+            if (result.state) { showPageNotification(`已归档到 ${folderName}`, 'success', 2000); if (typeof successCallback === 'function') successCallback(); }
+            else {
                 const errorMsg = result.error || '未知错误';
-                if (errorMsg.includes('尚未完成') || errorMsg.includes('请稍后再试')) {
-                    showPageNotification(`归档到 ${folderName} 暂时失败，请稍后重试`, 'error', 5000);
-                } else {
-                    showPageNotification(`归档到 ${folderName} 失败: ${errorMsg}`, 'error', 5000);
-                }
+                if (errorMsg.includes('尚未完成') || errorMsg.includes('请稍后再试')) { showPageNotification(`归档到 ${folderName} 暂时失败，请稍后重试`, 'error', 5000); }
+                else { showPageNotification(`归档到 ${folderName} 失败: ${errorMsg}`, 'error', 5000); }
                 if (typeof failCallback === 'function') failCallback(errorMsg);
             }
-        }).fail(err => {
-            showPageNotification(`移动文件请求失败: ${err.statusText || '网络错误'}`, 'error', 5000);
-            if (typeof failCallback === 'function') failCallback(err.statusText);
-        });
+        }).fail(err => { showPageNotification(`移动文件请求失败: ${err.statusText || '网络错误'}`, 'error', 5000); if (typeof failCallback === 'function') failCallback(err.statusText); });
     };
-
     const requestActressForArchive = (fid, code, seriesName, archiveMode, doneCallback) => {
         const key = code.toUpperCase();
         if (actressCache[key] && actressCache[key].length) {
@@ -819,10 +748,8 @@
             return;
         }
         GM_xmlhttpRequest({
-            method: "GET", url: javbusDirectAccess + code,
-            onload: xhr => {
-                const $r = $(xhr.responseText);
-                const actresses = [];
+            method: "GET", url: javbusDirectAccess + code, onload: xhr => {
+                const $r = $(xhr.responseText); const actresses = [];
                 $r.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses.push(n); });
                 if (actresses.length) {
                     actressCache[key] = actresses;
@@ -830,36 +757,25 @@
                     findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
                 } else {
                     GM_xmlhttpRequest({
-                        method: "GET", url: javbusUncensoredBase + code,
-                        onload: xhr2 => {
-                            const $r2 = $(xhr2.responseText);
-                            const actresses2 = [];
+                        method: "GET", url: javbusUncensoredBase + code, onload: xhr2 => {
+                            const $r2 = $(xhr2.responseText); const actresses2 = [];
                             $r2.find("span.genre a[href*='/star/']").each(function () { const n = $(this).text().trim(); if (n) actresses2.push(n); });
                             if (actresses2.length) {
                                 actressCache[key] = actresses2;
                                 const folderName = (archiveMode === "2" && seriesName) ? `${actresses2[0]} - ${seriesName}` : actresses2[0];
                                 findOrCreateFolderAndMove(fid, folderName, doneCallback, err => doneCallback());
-                            } else {
-                                showPageNotification(`未找到 ${code} 的演员信息`, 'error', 3000);
-                                doneCallback();
-                            }
-                        },
-                        onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
+                            } else { showPageNotification(`未找到 ${code} 的演员信息`, 'error', 3000); doneCallback(); }
+                        }, onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
                     });
                 }
-            },
-            onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
+            }, onerror: () => { showPageNotification(`查询演员失败`, 'error', 3000); doneCallback(); }
         });
     };
-
     const archiveToActorFolder = () => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         const cnt = $items.length;
         if (!cnt) { showPageNotification("请先选择文件或文件夹", 'info', 3000); return; }
-        if (!archiveRootCid) {
-            showPageNotification("请先设置归档根目录（右键文件夹 → 设为归档根目录）", 'error', 5000);
-            return;
-        }
+        if (!archiveRootCid) { showPageNotification("请先设置归档根目录（右键文件夹 → 设为归档根目录）", 'error', 5000); return; }
         const mode = prompt("选择归档方式：\n1 - 按女优\n2 - 按番号系列\n3 - 按女优+系列");
         if (!mode || !['1', '2', '3'].includes(mode)) { showPageNotification("无效选择", 'error', 3000); return; }
         progressBox.init('归档', cnt);
@@ -867,35 +783,21 @@
         let processed = 0, success = 0;
         const tasks = [];
         $items.each(function () {
-            const $it = $(this);
-            const fn = $it.attr("title");
-            const ft = $it.attr("file_type");
+            const $it = $(this); const fn = $it.attr("title"); const ft = $it.attr("file_type");
             let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
             if (!fid || !fn) return;
             const vi = parseVideoInfo(fn);
             if (!vi) { processed++; progressBox.update(processed); return; }
             const series = getSeriesFromCode(vi);
-            if ((mode === "2" || mode === "3") && !series) {
-                showPageNotification(`无法识别 ${vi.queryCode} 的系列，跳过`, 'error', 2500);
-                processed++; progressBox.update(processed);
-                return;
-            }
+            if ((mode === "2" || mode === "3") && !series) { showPageNotification(`无法识别 ${vi.queryCode} 的系列，跳过`, 'error', 2500); processed++; progressBox.update(processed); return; }
             tasks.push(done => {
-                if (mode === "1") {
-                    requestActressForArchive(fid, vi.queryCode, null, "1", () => { processed++; success++; progressBox.update(processed); done(); });
-                } else if (mode === "2") {
-                    findOrCreateFolderAndMove(fid, series, () => { processed++; success++; progressBox.update(processed); done(); }, () => { processed++; progressBox.update(processed); done(); });
-                } else if (mode === "3") {
-                    requestActressForArchive(fid, vi.queryCode, series, "2", () => { processed++; success++; progressBox.update(processed); done(); });
-                } else {
-                    processed++; progressBox.update(processed); done();
-                }
+                if (mode === "1") requestActressForArchive(fid, vi.queryCode, null, "1", () => { processed++; success++; progressBox.update(processed); done(); });
+                else if (mode === "2") findOrCreateFolderAndMove(fid, series, () => { processed++; success++; progressBox.update(processed); done(); }, () => { processed++; progressBox.update(processed); done(); });
+                else if (mode === "3") requestActressForArchive(fid, vi.queryCode, series, "2", () => { processed++; success++; progressBox.update(processed); done(); });
+                else { processed++; progressBox.update(processed); done(); }
             });
         });
-        runTasksWithLimit(tasks, 3, () => {
-            progressBox.finish();
-            showPageNotification(`归档完成：成功 ${success}/${cnt}`, 'success', 5000);
-        });
+        runTasksWithLimit(tasks, 3, () => { progressBox.finish(); showPageNotification(`归档完成：成功 ${success}/${cnt}`, 'success', 5000); });
     };
 
     // ========== JavDB 评分 ==========
@@ -908,27 +810,17 @@
         let processed = 0, success = 0;
         const tasks = [];
         $items.each(function () {
-            const $it = $(this);
-            const fn = $it.attr("title");
-            const ft = $it.attr("file_type");
+            const $it = $(this); const fn = $it.attr("title"); const ft = $it.attr("file_type");
             let fid = (ft === "0") ? $it.attr("cate_id") : $it.attr("file_id");
             if (!fid || !fn) return;
             const vi = parseVideoInfo(fn);
             if (!vi || !vi.queryCode) return;
             tasks.push(done => {
-                requestJavdbRating(fid, vi.queryCode, fn, ok => {
-                    processed++; if (ok) success++;
-                    progressBox.update(processed);
-                    done();
-                });
+                requestJavdbRating(fid, vi.queryCode, fn, ok => { processed++; if (ok) success++; progressBox.update(processed); done(); });
             });
         });
-        runTasksWithLimit(tasks, 2, () => {
-            progressBox.finish();
-            showPageNotification(`评分获取完成：成功 ${success}/${cnt}`, 'success', 5000);
-        });
+        runTasksWithLimit(tasks, 2, () => { progressBox.finish(); showPageNotification(`评分获取完成：成功 ${success}/${cnt}`, 'success', 5000); });
     };
-
     const requestJavdbRating = (fid, fh, fname, callback) => {
         GM_xmlhttpRequest({
             method: "GET", url: `${javdbSearchBase}${encodeURIComponent(fh)}&f=all`, timeout: 10000,
@@ -939,13 +831,7 @@
                     const item = doc.querySelector('.movie-list .item');
                     if (item) {
                         let rating = parseFloat(item.getAttribute('score'));
-                        if (isNaN(rating)) {
-                            const rel = item.querySelector('.score .value');
-                            if (rel) {
-                                const m = rel.textContent.trim().match(/(\d+\.\d+)分/);
-                                if (m) rating = parseFloat(m[1]);
-                            }
-                        }
+                        if (isNaN(rating)) { const rel = item.querySelector('.score .value'); if (rel) { const m = rel.textContent.trim().match(/(\d+\.\d+)分/); if (m) rating = parseFloat(m[1]); } }
                         if (!isNaN(rating)) { update115Rating(fid, Math.round(rating), fh, fname, callback); return; }
                         const link = item.querySelector('a.box');
                         if (link) {
@@ -958,15 +844,10 @@
                                         try {
                                             const dd = new DOMParser().parseFromString(dx.responseText, "text/html");
                                             const rEl = dd.querySelector('.panel-block .value');
-                                            if (rEl) {
-                                                const rating = parseFloat(rEl.textContent.trim().match(/(\d+\.\d+)/)?.[1]);
-                                                if (!isNaN(rating)) { update115Rating(fid, Math.round(rating), fh, fname, callback); return; }
-                                            }
+                                            if (rEl) { const rating = parseFloat(rEl.textContent.trim().match(/(\d+\.\d+)/)?.[1]); if (!isNaN(rating)) { update115Rating(fid, Math.round(rating), fh, fname, callback); return; } }
                                             callback(false);
                                         } catch (e) { callback(false); }
-                                    },
-                                    onerror: () => callback(false),
-                                    ontimeout: () => callback(false)
+                                    }, onerror: () => callback(false), ontimeout: () => callback(false)
                                 });
                                 return;
                             }
@@ -974,12 +855,9 @@
                     }
                     callback(false);
                 } catch (e) { callback(false); }
-            },
-            onerror: () => callback(false),
-            ontimeout: () => callback(false)
+            }, onerror: () => callback(false), ontimeout: () => callback(false)
         });
     };
-
     const update115Rating = (fid, star, fh, fname, callback) => {
         star = Math.max(1, Math.min(5, star));
         const finish = (ok) => { showPageNotification(`"${fh}"评分${ok ? `更新为 ${star} 星` : '更新失败'}`, ok ? 'success' : 'error', 2000); callback(ok); };
