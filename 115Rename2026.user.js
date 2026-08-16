@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         1.12.1
-// @description     115视频整理：本地加工与改名统一命名｜中文翻译｜@前缀清除｜分段/标记准确｜多站改名+归档+评分+备份
+// @version         1.12.3
+// @description     115视频整理：本地加工与改名统一｜中文翻译｜演员补全｜@前缀清除｜分段/标记准确｜多站改名+归档+评分+备份
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -405,7 +405,7 @@
         }
     };
 
-    // ========== 构建新名称（共用，统一命名） ==========
+    // ========== 构建新名称（共用） ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
         let cleanTitle = removeCodeFromTitle(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
@@ -607,9 +607,7 @@
     const fetchFC2PPVDB = (code, ok, fail) => {
         const fc2Number = code.match(/\d+$/)[0];
         GM_xmlhttpRequest({
-            method: "GET",
-            url: fc2ppvdbBase + fc2Number,
-            timeout: 10000,
+            method: "GET", url: fc2ppvdbBase + fc2Number, timeout: 10000,
             onload: xhr => {
                 try {
                     if (xhr.status !== 200) return fail("FC2PPVDB HTTP " + xhr.status);
@@ -622,17 +620,11 @@
                         if (title.includes(" - FC2PPVDB")) title = title.replace(" - FC2PPVDB", "").trim();
                     }
                     if (!title) return fail("FC2PPVDB 无标题");
-                    if (title && title.length > 0) {
-                        const standardFC2 = "FC2-PPV-" + fc2Number;
-                        const info = { title, date: '', actresses: [] };
-                        infoCache[code.toUpperCase()] = info;
-                        ok && ok(info);
-                    } else {
-                        fail("FC2PPVDB 解析失败");
-                    }
-                } catch (e) {
-                    fail("FC2PPVDB 解析失败: " + e.message);
-                }
+                    const standardFC2 = "FC2-PPV-" + fc2Number;
+                    const info = { title, date: '', actresses: [] };
+                    infoCache[code.toUpperCase()] = info;
+                    ok && ok(info);
+                } catch (e) { fail("FC2PPVDB 解析失败: " + e.message); }
             },
             onerror: () => fail("FC2PPVDB 请求失败"),
             ontimeout: () => fail("FC2PPVDB 超时")
@@ -645,27 +637,16 @@
         const timestamp = Math.floor(Date.now() / 1000);
         const unsignedPath = `/${databaseId}${path}?frontend_timestamp=${timestamp}`;
         try {
-            if (!globalThis.crypto || !globalThis.crypto.subtle || typeof TextEncoder === 'undefined') {
-                throw new Error("浏览器不支持Web Crypto");
-            }
+            if (!globalThis.crypto || !globalThis.crypto.subtle || typeof TextEncoder === 'undefined') throw new Error("浏览器不支持Web Crypto");
             const encoder = new TextEncoder();
-            globalThis.crypto.subtle.importKey(
-                "raw",
-                encoder.encode(publicToken),
-                { name: "HMAC", hash: "SHA-1" },
-                false,
-                ["sign"]
-            ).then(key => globalThis.crypto.subtle.sign("HMAC", key, encoder.encode(unsignedPath)))
+            globalThis.crypto.subtle.importKey("raw", encoder.encode(publicToken), { name: "HMAC", hash: "SHA-1" }, false, ["sign"])
+                .then(key => globalThis.crypto.subtle.sign("HMAC", key, encoder.encode(unsignedPath)))
                 .then(signatureBuffer => {
-                    const signature = Array.from(new Uint8Array(signatureBuffer))
-                        .map(value => value.toString(16).padStart(2, "0"))
-                        .join("");
+                    const signature = Array.from(new Uint8Array(signatureBuffer)).map(value => value.toString(16).padStart(2, "0")).join("");
                     successCallback(unsignedPath + "&frontend_sign=" + signature);
                 })
                 .catch(error => failCallback(error));
-        } catch (error) {
-            failCallback(error);
-        }
+        } catch (error) { failCallback(error); }
     };
 
     const fetchMissavFC2 = (code, ok, fail) => {
@@ -676,28 +657,16 @@
             GM_xmlhttpRequest({
                 method: "POST",
                 url: "https://client-rapi-missav.recombee.com" + signedPath,
-                headers: {
-                    "Accept": "application/json",
-                    "Content-Type": "application/json"
-                },
-                data: JSON.stringify({
-                    searchQuery: standardFC2,
-                    count: 10,
-                    cascadeCreate: true,
-                    returnProperties: true
-                }),
+                headers: { "Accept": "application/json", "Content-Type": "application/json" },
+                data: JSON.stringify({ searchQuery: standardFC2, count: 10, cascadeCreate: true, returnProperties: true }),
                 timeout: 15000,
                 onload: xhr => {
                     try {
-                        if (xhr.status && (xhr.status < 200 || xhr.status >= 300)) {
-                            return fail("MissAV HTTP " + xhr.status);
-                        }
+                        if (xhr.status && (xhr.status < 200 || xhr.status >= 300)) return fail("MissAV HTTP " + xhr.status);
                         let data = JSON.parse(xhr.responseText);
                         let results = Array.isArray(data && data.recomms) ? data.recomms : [];
                         let exactResult = results.find(item => String(item && item.id || "").toLowerCase() === expectedId);
-                        if (!exactResult || !exactResult.values) {
-                            return fail("MissAV 无精确匹配");
-                        }
+                        if (!exactResult || !exactResult.values) return fail("MissAV 无精确匹配");
                         let values = exactResult.values;
                         let originalTitle = String(values.title || "").trim();
                         if (!originalTitle) return fail("MissAV 无标题");
@@ -707,15 +676,11 @@
                         );
                         let date = null;
                         let releasedAt = Number(values.released_at);
-                        if (Number.isFinite(releasedAt) && releasedAt > 0) {
-                            date = new Date(releasedAt * 1000).toISOString().slice(0, 10);
-                        }
+                        if (Number.isFinite(releasedAt) && releasedAt > 0) date = new Date(releasedAt * 1000).toISOString().slice(0, 10);
                         const info = { title: originalTitle, date, actresses: actors };
                         infoCache[code.toUpperCase()] = info;
                         ok && ok(info);
-                    } catch (error) {
-                        fail("MissAV 解析失败: " + error.message);
-                    }
+                    } catch (error) { fail("MissAV 解析失败: " + error.message); }
                 },
                 onerror: () => fail("MissAV 请求失败"),
                 ontimeout: () => fail("MissAV 超时")
@@ -725,30 +690,17 @@
 
     const translateTitleToChinese = (title, enabled, fh, callback) => {
         let originalTitle = String(title || "").trim();
-        if (!enabled || !originalTitle) {
-            callback(originalTitle);
-            return;
-        }
+        if (!enabled || !originalTitle) { callback(originalTitle); return; }
 
         let finished = false;
-        function complete(value) {
-            if (finished) return;
-            finished = true;
-            callback(value);
-        }
-        function fallbackToOriginal(reason, error) {
-            console.log("翻译失败，使用原标题: " + reason, error || "");
-            complete(originalTitle);
-        }
+        function complete(value) { if (finished) return; finished = true; callback(value); }
+        function fallbackToOriginal(reason, error) { console.log("翻译失败，使用原标题: " + reason, error || ""); complete(originalTitle); }
 
         function tryMyMemory(deepLError) {
             console.log("DeepL失败，尝试MyMemory: ", deepLError || "");
-            let translateUrl = "https://api.mymemory.translated.net/get?q=" +
-                encodeURIComponent(originalTitle) + "&langpair=ja%7Czh-CN";
+            let translateUrl = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(originalTitle) + "&langpair=ja%7Czh-CN";
             GM_xmlhttpRequest({
-                method: "GET",
-                url: translateUrl,
-                timeout: 15000,
+                method: "GET", url: translateUrl, timeout: 15000,
                 onload: xhr => {
                     try {
                         if (xhr.status && (xhr.status < 200 || xhr.status >= 300)) throw new Error("HTTP " + xhr.status);
@@ -760,9 +712,7 @@
                         if (/MYMEMORY WARNING|QUERY LENGTH LIMIT|DAILY LIMIT/i.test(translated)) throw new Error(translated);
                         console.log("MyMemory翻译: " + originalTitle + " -> " + translated);
                         complete(translated);
-                    } catch (error) {
-                        fallbackToOriginal("MyMemory响应无效", error);
-                    }
+                    } catch (error) { fallbackToOriginal("MyMemory响应无效", error); }
                 },
                 onerror: error => fallbackToOriginal("MyMemory请求失败", error),
                 ontimeout: () => fallbackToOriginal("MyMemory请求超时")
@@ -772,15 +722,8 @@
         GM_xmlhttpRequest({
             method: "POST",
             url: "https://oneshot-free.www.deepl.com/v1/translate",
-            headers: {
-                "Authorization": "None",
-                "Content-Type": "application/json"
-            },
-            data: JSON.stringify({
-                text: [originalTitle],
-                source_lang: "ja",
-                target_lang: "zh-Hans"
-            }),
+            headers: { "Authorization": "None", "Content-Type": "application/json" },
+            data: JSON.stringify({ text: [originalTitle], source_lang: "ja", target_lang: "zh-Hans" }),
             timeout: 15000,
             onload: xhr => {
                 try {
@@ -790,41 +733,52 @@
                     if (!translated || translated === originalTitle) throw new Error("翻译结果为空或未变化");
                     console.log("DeepL翻译: " + originalTitle + " -> " + translated);
                     complete(translated);
-                } catch (error) {
-                    tryMyMemory(error);
-                }
+                } catch (error) { tryMyMemory(error); }
             },
             onerror: error => tryMyMemory(error),
             ontimeout: () => tryMyMemory(new Error("DeepL请求超时"))
         });
     };
 
-    // ========== 改名主流程 ==========
+    // ========== 改名主流程（含演员补全） ==========
     window.rename_multi = (fid, vInfo, suffix, addDate, callback, origFilename, translateChinese = false) => {
         const code = vInfo.queryCode;
         const key = code.toUpperCase();
 
-        function finish(title) {
-            const newName = buildNewName(vInfo, title, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ""), suffix);
-            send_115(fid, newName, vInfo.fullCode, origFilename, callback);
-        }
-
-        function handleInfo(info) {
+        function applyInfo(info) {
             if (translateChinese) {
                 translateTitleToChinese(info.title, true, code, translated => {
                     let finalTitle = info.title;
-                    if (translated && translated !== info.title) {
-                        finalTitle = `${info.title} ${translated}`;
-                    }
-                    finish(finalTitle);
+                    if (translated && translated !== info.title) finalTitle = `${info.title} ${translated}`;
+                    const newName = buildNewName(vInfo, finalTitle, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ""), suffix);
+                    send_115(fid, newName, vInfo.fullCode, origFilename, callback);
                 });
             } else {
-                finish(info.title);
+                const newName = buildNewName(vInfo, info.title, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ""), suffix);
+                send_115(fid, newName, vInfo.fullCode, origFilename, callback);
             }
         }
 
+        function enrichActorsFromSources(baseInfo, sources, done) {
+            if (!sources.length || (baseInfo.actresses && baseInfo.actresses.length > 0)) {
+                done(baseInfo);
+                return;
+            }
+            const source = sources.shift();
+            source(code, fetched => {
+                if (fetched.actresses && fetched.actresses.length > 0) {
+                    baseInfo.actresses = fetched.actresses;
+                    done(baseInfo);
+                } else {
+                    enrichActorsFromSources(baseInfo, sources, done);
+                }
+            }, () => {
+                enrichActorsFromSources(baseInfo, sources, done);
+            });
+        }
+
         if (infoCache[key]) {
-            handleInfo(infoCache[key]);
+            applyInfo(infoCache[key]);
             return;
         }
 
@@ -832,15 +786,15 @@
             if (/^FC2-PPV-\d{5,7}$/i.test(code)) {
                 fetchJavdb(code, info => {
                     infoCache[key] = info;
-                    handleInfo(info);
+                    applyInfo(info);
                 }, () => {
                     fetchMissavFC2(code, info => {
                         infoCache[key] = info;
-                        handleInfo(info);
+                        applyInfo(info);
                     }, () => {
                         fetchFC2PPVDB(code, info => {
                             infoCache[key] = info;
-                            handleInfo(info);
+                            applyInfo(info);
                         }, () => {
                             showPageNotification(`所有FC2信息源未找到 ${code}`, 'error', 4000);
                             if (typeof callback === 'function') callback();
@@ -848,16 +802,25 @@
                     });
                 });
             } else {
-                fetchJavdb(code, info => {
-                    infoCache[key] = info;
-                    handleInfo(info);
+                fetchJavdb(code, dbInfo => {
+                    enrichActorsFromSources(dbInfo, [fetchJavbus, fetchXslist], enriched => {
+                        infoCache[key] = enriched;
+                        applyInfo(enriched);
+                    });
                 }, () => {
-                    fetchJavbus(code, info => {
-                        infoCache[key] = info;
-                        handleInfo(info);
+                    fetchJavbus(code, busInfo => {
+                        enrichActorsFromSources(busInfo, [fetchXslist], enriched => {
+                            infoCache[key] = enriched;
+                            applyInfo(enriched);
+                        });
                     }, () => {
-                        showPageNotification(`所有信息源未找到 ${code}`, 'error', 4000);
-                        if (typeof callback === 'function') callback();
+                        fetchXslist(code, xsInfo => {
+                            infoCache[key] = xsInfo;
+                            applyInfo(xsInfo);
+                        }, () => {
+                            showPageNotification(`所有信息源未找到 ${code}`, 'error', 4000);
+                            if (typeof callback === 'function') callback();
+                        });
                     });
                 });
             }
@@ -887,11 +850,8 @@
             const ft = $it.attr("file_type");
             let fid;
             const safeSuffix = getSafeSuffix(fn);
-            if (ft === "0") {
-                fid = $it.attr("cate_id");
-            } else {
-                fid = $it.attr("file_id");
-            }
+            if (ft === "0") fid = $it.attr("cate_id");
+            else fid = $it.attr("file_id");
             if (!fid || !fn) return;
             const vi = parseVideoInfo(fn, safeSuffix);
             if (!vi) return;
@@ -1005,16 +965,19 @@
             if (info.actresses && info.actresses.length) {
                 findOrCreateFolderAndMove(fid, info.actresses[0], successCallback, failCallback);
             } else {
-                failCallback('未找到演员');
+                fetchJavbus(fh, busInfo => {
+                    actressCache[key] = busInfo.actresses;
+                    if (busInfo.actresses && busInfo.actresses.length) {
+                        findOrCreateFolderAndMove(fid, busInfo.actresses[0], successCallback, failCallback);
+                    } else failCallback('未找到演员');
+                }, () => failCallback('JavBus也失败'));
             }
         }, () => {
             fetchJavbus(fh, info => {
                 actressCache[key] = info.actresses;
                 if (info.actresses && info.actresses.length) {
                     findOrCreateFolderAndMove(fid, info.actresses[0], successCallback, failCallback);
-                } else {
-                    failCallback('未找到演员');
-                }
+                } else failCallback('未找到演员');
             }, () => failCallback('JavBus也失败'));
         });
     };
