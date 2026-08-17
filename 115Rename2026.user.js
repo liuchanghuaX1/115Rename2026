@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         2.1.2
+// @version         2.1.3
 // @description     115视频整理：右键菜单保留｜中文翻译｜演员补全｜多站改名+归档+评分+备份｜性能优化｜修复SP分段残留
 // @author          sonarlee
 // @include         https://115.com/*
@@ -518,18 +518,42 @@
         'JHZD', 'NFDM', 'CGAD', 'CGBD', 'CHSD', 'CUSD', 'CHSH', 'CMV', 'PAED', 'RGI', 'ZARD', 'ZATS', 'ZDAD', 'ZKV',
         'COSETT', 'MXGS', 'MX3DS', 'IPBZ', 'FSDSS', 'SVMGM', 'MIDA',
         'DSAM', 'RED', 'BT', 'MX', 'SI', 'VOL', 'CR', 'N',
-        'STZY', 'START', 'SONE', 'KIDM',
-        'ABF', 'ABW', 'ACHJ', 'CAWD', 'DLDSS', 'HMN', 'JUQ', 'JUR', 'MKMP', 'MISM',
-        'MVSD', 'NNPJ', 'PPPE', 'SDAM', 'SDJS', 'SDMF', 'SDMM', 'TYSF', 'UMD', 'VENX',
-        'WAAA', 'YUJ', 'FERA', 'BKD', 'BIJN', 'AARM', 'NHDTB', 'JUFD', 'JUTN', 'JRZE',
+        // 新增主流厂牌
+        'SONE', 'START', 'ABF', 'HMN', 'JUQ', 'JUR', 'WAAA', 'DLDSS', 'CAWD', 'MKMP',
+        'MISM', 'MVSD', 'NNPJ', 'PPPE', 'SDAM', 'SDJS', 'SDMF', 'SDMM', 'TYSF', 'UMD',
+        'VENX', 'YUJ', 'FERA', 'BKD', 'BIJN', 'AARM', 'NHDTB', 'JUFD', 'JUTN', 'JRZE',
         'KSBJ', 'MIMK', 'MDBK', 'SAME', 'SDHS', 'STSK', 'MIAB', 'MDON', 'MKON', 'BONY',
         'FNEO', 'OFKU', 'MUKC', 'SUKE', 'NIMA', 'AMBI', 'ARAN', 'EBWH', 'FPRE', 'GVH',
         'HJMO', 'HOKS', 'IENF', 'JUNY', 'KANO', 'KBMS', 'KIT', 'KMHR', 'KTRA', 'LULU',
         'MCT', 'MMUS', 'MRSS', 'NACR', 'NKKD', 'OKS', 'ONEX', 'PED', 'ROE', 'RKI',
         'SILK', 'SPLY', 'SQTE', 'SUPA', 'VEC', 'VENZ', 'YOCH',
+        // VR系列
         '3DSVR', 'DSVR', 'MDVR', 'IPVR', 'KMVR', 'ATVR', 'PRVR', 'SAVR', 'CAVR', 'VRKM', 'SLVR',
-        'GOPJ'
-    ].sort((a, b) => b.length - a.length);
+        // 下载站/素人/无码
+        'GOPJ', 'HEYZO', '1PONDO', 'CARIB', 'CARIBBEAN', 'PACO', 'PACOPACOMAMA',
+        'TOKYO-HOT', 'TOKYOHOT', '10MU', '10MUSUME', '1000GIRI', 'MURA', 'H4610', 'NAMA',
+        'STZY', 'KIDM', 'ACHJ'
+    ];
+
+    // ========== 自动扩展：添加所有双字母组合和单字母 ==========
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    for (let i = 0; i < 26; i++) {
+        for (let j = 0; j < 26; j++) {
+            const prefix = letters[i] + letters[j];
+            if (!GARBAGE_WORDS.includes(prefix) && !CODE_PREFIXES.includes(prefix)) {
+                CODE_PREFIXES.push(prefix);
+            }
+        }
+    }
+    for (let i = 0; i < 26; i++) {
+        const prefix = letters[i];
+        if (!GARBAGE_WORDS.includes(prefix) && !CODE_PREFIXES.includes(prefix)) {
+            CODE_PREFIXES.push(prefix);
+        }
+    }
+
+    // 保持长优先
+    CODE_PREFIXES.sort((a, b) => b.length - a.length);
 
     const CODE_PREFIX_PATTERNS = CODE_PREFIXES.map(p => ({
         prefix: p,
@@ -808,9 +832,15 @@
                     queryCode = fc2Code;
                     displayCode = fc2Code;
                     const fc2Num = fc2Code.match(/\d+$/)[0];
-                    const rawFC2Pattern = new RegExp(`\\b(?:fc2?|FC2?)[\\s_-]*(?:ppv[\\s_-]*)?0*${fc2Num}\\b`, 'i');
-                    const rawFC2Match = rawForCode.match(rawFC2Pattern);
-                    if (rawFC2Match) rawForCode = rawForCode.replace(rawFC2Match[0], ' ');
+                    const rawForCode = rawForCode.replace(
+                        new RegExp(`(?:^|\\s)fc2?[\\s_-]*(?:ppv[\\s_-]*)?0*${fc2Num}(?:\\s|$)`, 'i'),
+                        ' '
+                    ).trim();
+                    const partMatch = rawForCode.match(/[-_](\d{1,3})(?:\s|$)/);
+                    if (partMatch) {
+                        part = normalizePartToken(partMatch[1]);   // "001" → "1"
+                        rawForCode = rawForCode.replace(partMatch[0], ' ').trim();
+                    }
                 } else {
                     const siteCode = extractSitePrefixedCodeFromName(origTitle);
                     if (siteCode && siteCode.code) {
