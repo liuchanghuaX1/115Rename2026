@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         2.1.0
-// @description     115视频整理：右键菜单保留｜中文翻译｜演员补全｜多站改名+归档+评分+备份｜性能优化
+// @version         2.1.2
+// @description     115视频整理：右键菜单保留｜中文翻译｜演员补全｜多站改名+归档+评分+备份｜性能优化｜修复SP分段残留
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -75,12 +75,12 @@
     const folderCidCache = {};
 
     // ========== 缓存 TTL + 失败负缓存 ==========
-    const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;       // 标题/女优缓存 90 天过期
-    const NEGATIVE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;   // “查无此番号”负缓存 24 小时
+    const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+    const NEGATIVE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
     const isInfoCacheValid = (code) => {
         const e = infoCache[code];
         if (!e) return false;
-        if (!e.cachedAt) return true;                    // 旧版本缓存无时间戳，暂视为有效
+        if (!e.cachedAt) return true;
         return (Date.now() - Number(e.cachedAt)) < CACHE_TTL_MS;
     };
     const storeInfo = (key, info) => { if (info) info.cachedAt = Date.now(); infoCache[key] = info; };
@@ -94,7 +94,6 @@
     // ========== 字符串辅助 ==========
     const stripFileExt = (name) => { const s = String(name || ''); const idx = s.lastIndexOf('.'); return idx > 0 ? s.slice(0, idx) : s; };
     const escapeRegExp = (str) => String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // 分段序号规范化：003 → 3，001 → 1（字母分段如 A/B 原样保留）
     const normalizePartToken = (p) => {
         const s = String(p == null ? '' : p);
         if (/^\d+$/.test(s)) {
@@ -103,7 +102,6 @@
         }
         return s;
     };
-    // 115 名称基础规范化：NFKC + 去零宽/不可见字符 + 标点统一 + 115 非法字符转空格
     const normalize115Name = (n) => {
         if (!n) return '';
         let s = String(n);
@@ -120,7 +118,6 @@
         s = s.replace(/[\\\/:?"<>|*]/g, ' ');
         return s.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
     };
-    // 女优/文件夹名称标准化（解决半角/全角/不可见字符差异，保留日文汉字与繁体）
     const normalizeFolderName = (name) => {
         if (!name) return '';
         let s = normalize115Name(String(name));
@@ -141,7 +138,6 @@
         s = s.replace(/\u30FB/g, '·');
         return s.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
     };
-    // 名称折叠键：忽略大小写/分隔符/括号，仅保留字母数字与中日韩字符（用于女优去重与匹配）
     const folderNameKey = (n) => {
         if (!n) return '';
         return normalize115Name(n)
@@ -150,7 +146,7 @@
             .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]/g, '');
     };
 
-    // ========== 查询变体（去横杠 / 去补零等） ==========
+    // ========== 查询变体 ==========
     const getCodeQueryVariants = (code) => {
         const variants = [String(code || '')];
         const noDash = String(code || '').replace(/-/g, '');
@@ -159,214 +155,114 @@
         if (m) {
             const prefix = m[1], numRaw = m[2];
             const num = String(parseInt(numRaw, 10));
-            if (num !== numRaw) variants.push(prefix + '-' + num); // 去补零
-            variants.push(prefix + num);      // 无横杠
+            if (num !== numRaw) variants.push(prefix + '-' + num);
+            variants.push(prefix + num);
             variants.push(prefix + ' ' + num);
             variants.push(prefix + '_' + num);
         }
         return [...new Set(variants)];
     };
 
-    // ========== 女优别名映射表 ==========
-    // 格式: { '别名': '标准名' } —— 所有别名统一映射到标准名，归档时归入标准名文件夹
+    // ========== 女优别名映射表（完整） ==========
     const actressAliasMap = {
-        // === 三上悠亚 ===
         '三上悠亜': '三上悠亚', 'Mikami Yua': '三上悠亚', 'みかみゆあ': '三上悠亚', 'ミカミユア': '三上悠亚', 'Yua Mikami': '三上悠亚',
-        // === 深田咏美 ===
         '深田えいみ': '深田咏美', 'Fukada Eimi': '深田咏美', 'ふかだえいみ': '深田咏美', 'Eimi Fukada': '深田咏美',
-        // === 天使萌 ===
         '天使もえ': '天使萌', 'Amatsuka Moe': '天使萌', 'あまつかもえ': '天使萌', 'Moe Amatsuka': '天使萌',
-        // === 桃乃木香奈 ===
         '桃乃木かな': '桃乃木香奈', 'Momonogi Kana': '桃乃木香奈', 'もものぎかな': '桃乃木香奈', 'Kana Momonogi': '桃乃木香奈',
-        // === 凪光 ===
         '凪ひかる': '凪光', 'Nagi Hikaru': '凪光', 'なぎひかる': '凪光', 'Hikaru Nagi': '凪光', '有栖花あか': '凪光', 'Ariska Aka': '凪光',
-        // === 坂道美琉 ===
         '坂道みる': '坂道美琉', 'Sakamichi Miru': '坂道美琉', 'さかみちみる': '坂道美琉',
-        // === 枣柚乃 ===
         '棗ゆうの': '枣柚乃', 'Natsume Yuuno': '枣柚乃', 'なつめゆうの': '枣柚乃',
-        // === 小野六花 ===
         '小野六花': '小野六花', 'Ono Rokka': '小野六花', 'おのろっか': '小野六花',
-        // === 高桥圣子 ===
         '高橋しょう子': '高桥圣子', 'Takahashi Shoko': '高桥圣子', 'たかはししょうこ': '高桥圣子', '高橋聖子': '高桥圣子',
-        // === 神木隆之介 ===
         '神木隆之介': '神木隆之介',
-        // === 吉高宁宁 ===
         '吉高宁々': '吉高宁宁', 'Yoshitaka Nene': '吉高宁宁', 'よしたかねね': '吉高宁宁',
-        // === 明里紬 ===
         '明里つむぎ': '明里紬', 'Akari Tsumugi': '明里紬', 'あかりつむぎ': '明里紬',
-        // === 唯井真寻 ===
         '唯井まひろ': '唯井真寻', 'Yui Mahiro': '唯井真寻', 'ゆいまひろ': '唯井真寻', 'Mahiro Yui': '唯井真寻',
-        // === 枢木葵 ===
         '枢木あおい': '枢木葵', 'Kururugi Aoi': '枢木葵', 'くるるぎあおい': '枢木葵',
-        // === 河北彩花 ===
         '河北彩花': '河北彩花', 'Kawakita Saika': '河北彩花', 'かわきたさいか': '河北彩花',
-        // === 松本一香 ===
         '松本いちか': '松本一香', 'Matsumoto Ichika': '松本一香', 'まつもといちか': '松本一香',
-        // === 石原希望 ===
         '石原希望': '石原希望', 'Ishihara Nozomi': '石原希望', 'いしはらのぞみ': '石原希望',
-        // === 樱空桃 ===
         '桜空もも': '樱空桃', 'Sakura Momo': '樱空桃', 'さくらもも': '樱空桃',
-        // === 凉森玲梦 ===
         '涼森れむ': '凉森玲梦', 'Suzumori Remu': '凉森玲梦', 'すずもりれむ': '凉森玲梦',
-        // === 琴井雏绘 ===
         '琴井雏绘': '琴井雏绘', 'Kotoi Hinae': '琴井雏绘',
-        // === 北野未奈 ===
         '北野未奈': '北野未奈', 'Kitano Mina': '北野未奈', 'きたのみな': '北野未奈', '北野みな': '北野未奈',
-        // === 神納花 ===
         '神納花': '神納花', '神纳花': '神納花',
-        // === 美谷朱里 ===
         '美谷朱里': '美谷朱里', 'Mitani Akari': '美谷朱里', 'みたにあかり': '美谷朱里',
-        // === 七泽米亚 ===
         '七沢みあ': '七泽米亚', 'Nanasawa Mia': '七泽米亚', 'ななさわみあ': '七泽米亚',
-        // === 河南实里 ===
         '河南実里': '河南实里', 'Kawami Minori': '河南实里',
-        // === 宫下玲奈 ===
         '宮下玲奈': '宫下玲奈', 'Miyashita Rena': '宫下玲奈', 'みやしたれな': '宫下玲奈',
-        // === 纱仓真菜 ===
         '紗倉まな': '纱仓真菜', 'Sakura Mana': '纱仓真菜', 'さくらまな': '纱仓真菜', 'Mana Sakura': '纱仓真菜',
-        // === 凑莉久 ===
         '湊莉久': '凑莉久', 'Minato Riku': '凑莉久', 'みなとりく': '凑莉久', 'Riku Minato': '凑莉久',
-        // === 本庄铃 ===
         '本庄鈴': '本庄铃', 'Honjou Suzu': '本庄铃', 'ほんじょうすず': '本庄铃',
-        // === 西宫梦 ===
         '西宮ゆめ': '西宫梦', 'Nishimiya Yume': '西宫梦', 'にしみやゆめ': '西宫梦',
-        // === 铃木真夕 ===
         '鈴木真夕': '铃木真夕', 'Suzuki Mayu': '铃木真夕', 'すずきまゆ': '铃木真夕',
-        // === 永野一夏 ===
         '永野いちか': '永野一夏', 'Nagano Ichika': '永野一夏', 'ながのいちか': '永野一夏',
-        // === 金松季步 ===
         '金松季歩': '金松季步', 'Kanamatsu Kiho': '金松季步',
-        // === 古川伊织 ===
         '古川いおり': '古川伊织', 'Furukawa Iori': '古川伊织', 'ふるかわいおり': '古川伊织',
-        // === 葵司 ===
         '葵司': '葵司', 'Aoi Tsukasa': '葵司', 'あおいつかさ': '葵司',
-        // === 樱乃由华 ===
         '桜乃ゆら': '樱乃由华', 'Sakurano Yura': '樱乃由华', 'さくらのゆら': '樱乃由华',
-        // === 樱井步 ===
         '桜井歩': '樱井步', 'Sakurai Ayumi': '樱井步', 'さくらいあゆみ': '樱井步',
-        // === 波多野结衣 ===
         '波多野結衣': '波多野结衣', 'Hatano Yui': '波多野结衣', 'はたのゆい': '波多野结衣',
-        // === 深泽芹香 ===
         '深澤せりな': '深泽芹香', 'Fukasawa Serina': '深泽芹香',
-        // === 小仓奈奈 ===
         '小倉奈々': '小仓奈奈', 'Ogura Nana': '小仓奈奈', 'おぐらなな': '小仓奈奈',
-        // === 铃木心春 ===
         '鈴木心春': '铃木心春', 'Suzuki Koharu': '铃木心春',
-        // === 铃木凉那 ===
         '鈴木涼那': '铃木凉那', 'Suzuki Rina': '铃木凉那',
-        // === 八挂海 ===
         '八掛うみ': '八挂海', 'Yakeno Umi': '八挂海', 'やかけうみ': '八挂海',
-        // === 横宫七海 ===
         '横宮七海': '横宫七海', 'Yokomiya Nanami': '横宫七海', 'よこみやななみ': '横宫七海',
-        // === 八木奈奈 ===
         '八木奈々': '八木奈奈', 'Yagi Nana': '八木奈奈', 'やぎなな': '八木奈奈',
-        // === 安斋拉拉 ===
         '安齋らら': '安斋拉拉', 'Anzai Rara': '安斋拉拉', 'あんざいらら': '安斋拉拉', '田中宁宁': '安斋拉拉',
-        // === 铃木一彻 ===
         '鈴木一徹': '铃木一彻', 'Suzuki Issei': '铃木一彻',
-        // === 新有菜 ===
         '新井エリス': '新有菜', '新井艾丽丝': '新有菜', 'Arisu Arai': '新有菜', 'Yua Nanami': '新有菜', '七沢ゆあ': '新有菜', '新有菜': '新有菜',
-        // === 架乃由罗 ===
         '架乃ゆら': '架乃由罗', 'Kano Yura': '架乃由罗', 'かのゆら': '架乃由罗',
-        // === 桥本有菜 ===
         '橋本ありな': '桥本有菜', 'Hashimoto Arina': '桥本有菜', 'はしもとありな': '桥本有菜', 'Arina Hashimoto': '桥本有菜',
-        // === 饭冈佳奈子 ===
         '飯岡かなこ': '饭冈佳奈子', 'Iioka Kanako': '饭冈佳奈子', 'いいおかかなこ': '饭冈佳奈子',
-        // === 三宫椿 ===
         '三宮つばき': '三宫椿', 'Sannomiya Tsubaki': '三宫椿', 'さんのみやつばき': '三宫椿', 'Tsubaki Sannomiya': '三宫椿',
-        // === 小野寺地 ===
         '小野寺地': '小野寺地', 'Onodera Rina': '小野寺地',
-        // === 乙都绘美 ===
         '乙都絵美': '乙都绘美', 'Oto Emi': '乙都绘美',
-        // === 凉海美沙 ===
         '涼海みさ': '凉海美沙', 'Suzumi Misa': '凉海美沙',
-        // === 山手梨爱 ===
         '山手梨愛': '山手梨爱', 'Yamamate Ria': '山手梨爱', 'やまてりあ': '山手梨爱', 'Ria Yamate': '山手梨爱',
-        // === 加藤夏希 ===
         '加藤なつ希': '加藤夏希', 'Kato Natsuki': '加藤夏希',
-        // === 神宫寺奈绪 ===
         '神宮寺ナオ': '神宫寺奈绪', 'Jinguji Nao': '神宫寺奈绪', 'じんぐうじなお': '神宫寺奈绪', 'Nao Jinguji': '神宫寺奈绪',
-        // === 结月共 ===
         '結月共': '结月共', 'Yuzuki Aoi': '结月共', '結城りの': '结月共',
-        // === 羽咲美 ===
         '羽咲みは': '羽咲美', 'Usa Miha': '羽咲美',
-        // === 小仓由菜 ===
         '小倉由菜': '小仓由菜', 'Ogura Yuna': '小仓由菜', 'おぐらゆな': '小仓由菜', 'Yuna Ogura': '小仓由菜',
-        // === 唯香 ===
         '唯香': '唯香', 'Yui Mitsuha': '唯香',
-        // === 七濑爱丽丝 ===
         '七瀬アリス': '七濑爱丽丝', 'Nanase Alice': '七濑爱丽丝', 'ななせありす': '七濑爱丽丝', 'Alice Nanase': '七濑爱丽丝',
-        // === 七濑胡桃 ===
         '七瀬くるみ': '七濑胡桃', 'Nanase Kurumi': '七濑胡桃', 'ななせくるみ': '七濑胡桃',
-        // === 濑名美红 ===
         '瀬名美紅': '濑名美红', 'Sena Miku': '濑名美红',
-        // === 冲田杏梨 ===
         '沖田杏梨': '冲田杏梨', 'Okita Anri': '冲田杏梨', 'おきたあんり': '冲田杏梨', 'Anri Okita': '冲田杏梨',
-        // === 白石茉莉奈 ===
         '白石茉莉奈': '白石茉莉奈', 'Shiraishi Marina': '白石茉莉奈', 'しらいしまりな': '白石茉莉奈',
-        // === 大槻响 ===
         '大槻ひびき': '大槻响', 'Otsuki Hibiki': '大槻响', 'おおつきひびき': '大槻响', 'Hibiki Otsuki': '大槻响',
-        // === 友田彩也香 ===
         '友田彩也香': '友田彩也香', 'Tomoda Ayaka': '友田彩也香', 'ともだあやか': '友田彩也香',
-        // === 稻森诗穗 ===
         '稲森しほ': '稻森诗穗', 'Inamori Shiho': '稻森诗穗',
-        // === 希崎杰西卡 ===
         '希崎ジェシカ': '希崎杰西卡', 'Kizaki Jessica': '希崎杰西卡', 'きざきじぇしか': '希崎杰西卡', 'Jessica Kizaki': '希崎杰西卡',
-        // === 希岛爱理 ===
         '希岛あいり': '希岛爱理', 'Kijima Airi': '希岛爱理', 'きじまあいり': '希岛爱理', 'Airi Kijima': '希岛爱理',
-        // === 松永纱奈 ===
         '松永さな': '松永纱奈', 'Matsunaga Sana': '松永纱奈', 'まつながさな': '松永纱奈',
-        // === 小凑四叶 ===
         '小湊よつ葉': '小凑四叶', 'Kominato Yotsuha': '小凑四叶', 'こみなとよつは': '小凑四叶', 'Yotsuha Kominato': '小凑四叶',
-        // === 奥田咲 ===
         '奥田咲': '奥田咲', 'Okuda Saki': '奥田咲', 'おくださき': '奥田咲',
-        // === 推川悠里 ===
         '推川ゆうり': '推川悠里', 'Oshikawa Yuuri': '推川悠里', 'おしかわゆうり': '推川悠里', 'Yuri Oshikawa': '推川悠里',
-        // === 响乃音 ===
         '響乃うた': '响乃音', 'Hibino Uta': '响乃音', 'ひびのうた': '响乃音',
-        // === 伊藤舞雪 ===
         '伊藤舞雪': '伊藤舞雪', 'Ito Miyuki': '伊藤舞雪', 'いとうまゆき': '伊藤舞雪', 'Mayuki Ito': '伊藤舞雪',
-        // === 冈本葵 ===
         '岡本葵': '冈本葵', 'Okamoto Aoi': '冈本葵', 'おかもとあおい': '冈本葵',
-        // === 广濑百合 ===
         'Hirose Yuria': '广濑百合', 'ひろせゆりあ': '广濑百合',
-        // === 美谷朱音 ===
         '美谷朱音': '美谷朱音', 'Mitani Akane': '美谷朱音', 'みたにあかね': '美谷朱音', 'Akane Mitani': '美谷朱音',
-        // === 天海翼 ===
         '天海つばさ': '天海翼', 'Amami Tsubasa': '天海翼', 'あまみつばさ': '天海翼', 'Tsubasa Amami': '天海翼',
-        // === 希德爱 ===
         '希德爱': '希德爱', 'Kieda Ai': '希德爱',
-        // === 初川南 ===
         '初川みなみ': '初川南', 'Hatsukawa Minami': '初川南', 'はつかわみなみ': '初川南', 'Minami Hatsukawa': '初川南',
-        // === 滨崎真绪 ===
         '浜崎真緒': '滨崎真绪', 'Hamasaki Mao': '滨崎真绪', 'はまさきまお': '滨崎真绪', 'Mao Hamasaki': '滨崎真绪',
-        // === 上原亚衣 ===
         '上原亜衣': '上原亚衣', 'Uehara Ai': '上原亚衣', 'うえはらあい': '上原亚衣', 'Ai Uehara': '上原亚衣',
-        // === 彩美旬果 ===
         '彩美旬果': '彩美旬果', 'Ayami Shunka': '彩美旬果', 'あやみしゅんか': '彩美旬果',
-        // === 大桥未久 ===
         '大橋未久': '大桥未久', 'Ohashi Mihuku': '大桥未久', 'おおはしみふく': '大桥未久',
-        // === 西野翔 ===
         '西野翔': '西野翔', 'Nishino Sho': '西野翔', 'にしのしょう': '西野翔',
-        // === 吉泽明步 ===
         '吉沢明歩': '吉泽明步', 'Yoshizawa Akiho': '吉泽明步', 'よしざわあきほ': '吉泽明步', 'Akiho Yoshizawa': '吉泽明步',
-        // === 苍井空 ===
         '蒼井そら': '苍井空', 'Sora Aoi': '苍井空', 'あおいそら': '苍井空', 'Aoi Sora': '苍井空',
-        // === 小泽玛利亚 ===
         '小澤マリア': '小泽玛利亚', 'Ozawa Maria': '小泽玛利亚', 'おざわまりあ': '小泽玛利亚', 'Maria Ozawa': '小泽玛利亚',
-        // === 立花琉璃 ===
         '立花るい': '立花琉璃', 'Tachibana Rui': '立花琉璃', 'たちばなるい': '立花琉璃',
-        // === 冴岛奈绪 ===
         '冴島奈緒': '冴岛奈绪', 'Saejima Nao': '冴岛奈绪',
-        // === 并木塔 ===
         '並木塔': '并木塔', 'Namiki Tou': '并木塔',
-        // === 铃木一真 ===
         '鈴木一真': '铃木一真', 'Suzuki Kazuma': '铃木一真',
-        // === 夏目响 ===
         '夏目響': '夏目响', 'Natsume Hibiki': '夏目响', 'なつめひびき': '夏目响', 'Hibiki Natsume': '夏目响',
-        // === 松本梨穗 ===
         '松本梨穗': '松本梨穗', 'Matsumoto Riho': '松本梨穗',
-        // === v2.10.20：目录树尾部姓名补充库 ===
         '蘭々': '蘭々', '蘭蘭': '蘭々', 'RAN': '蘭々', 'Ran': '蘭々',
         '由愛可奈': '由愛可奈', '由爱可奈': '由愛可奈',
         'JULIA': 'JULIA', 'AIKA': 'AIKA', 'RION': 'RION',
@@ -403,11 +299,9 @@
         '涼菜波美': '涼菜波美',
         'KOKONO NATSUKA': 'KOKONO NATSUKA', 'KOKONO': 'KOKONO NATSUKA', 'NATSUKA': 'KOKONO NATSUKA',
         'Rio': 'Rio', 'Momo': 'Momo', 'RIO': 'Rio', 'MOMO': 'Momo',
-        // === 伊藤优 ===
         '伊藤優': '伊藤优', 'Ito Yu': '伊藤优',
     };
 
-    // 获取女优标准名（查别名表，未命中则返回标准化后的原名）
     const getStandardActressName = (name) => {
         if (!name) return name;
         const n = normalizeFolderName(String(name));
@@ -416,7 +310,6 @@
         return n;
     };
 
-    // 女优名是否为合理 token（轻量过滤，避免标题词/分类词进入女优名）
     const isPlausibleActressToken = (name) => {
         if (!name) return false;
         let n = normalizeFolderName(String(name));
@@ -427,7 +320,6 @@
         if (/^(有码|有碼|无码|無碼|欧美|歐美|动漫|動漫|系列|片商|演員|演员|女优|女優|中文字幕|字幕|高清|無修正|无修正|合集|整理|未整理|已整理)$/.test(n)) return false;
         if (/^(女优归档|女優归档|女優歸檔|女优歸檔)[-_]?\d*$/i.test(n)) return false;
         if (/^(番号归档|番號归档|番号歸檔|番號歸檔)(?:[-_][A-Z0-9]+)?$/i.test(n)) return false;
-        // 明显是标题/卖点文案的词不允许进入女优名
         if (/[!！?？~〜～]/.test(n)) return false;
         if (/(AV女優|AV女优|新人AV|新人|中出し|中出|生中出|無修正|无码|高清|中文字幕|素人|人妻|限定|企画|シリーズ|NTR)/i.test(n)) return false;
         return true;
@@ -436,7 +328,6 @@
     // ========== 全局任务锁 ==========
     window.renameInProgress = false;
 
-    // ========== 并发与进度（修复：doneAll 只执行一次） ==========
     function runTasksWithLimit(tasks, limit, intervalMs, doneAll) {
         if (!tasks.length) { doneAll && doneAll(); return; }
         let index = 0, running = 0;
@@ -494,7 +385,7 @@
         finish() { this.paused = false; this.update(this.total); setTimeout(() => $('#task-progress-box').fadeOut(300), 800); }
     };
 
-    // ========== Toast 通知（限流：最多同时显示 3 个，其余排队） ==========
+    // ========== Toast 通知 ==========
     const toastQueue = [];
     let toastActive = 0;
     const TOAST_MAX = 3;
@@ -561,7 +452,6 @@
         return idx === -1 ? filename : filename.substring(idx + 1).trim();
     };
 
-    // ========== 安全后缀 ==========
     const getSafeSuffix = (filename) => {
         const m = filename.match(/\.([a-z0-9]{2,5})$/i);
         if (m && !/^\d+$/.test(m[1])) return m[0];
@@ -596,7 +486,7 @@
         });
     };
 
-    // ========== 番号前缀库（长优先） ==========
+    // ========== 番号前缀库 ==========
     const CODE_PREFIXES = [
         'LEGSJAPAN', 'AYAKISAKI', 'SPERMMANIA', 'FELLATIOJAPAN',
         'S2MCR', 'MXVR', 'SIVR',
@@ -628,9 +518,7 @@
         'JHZD', 'NFDM', 'CGAD', 'CGBD', 'CHSD', 'CUSD', 'CHSH', 'CMV', 'PAED', 'RGI', 'ZARD', 'ZATS', 'ZDAD', 'ZKV',
         'COSETT', 'MXGS', 'MX3DS', 'IPBZ', 'FSDSS', 'SVMGM', 'MIDA',
         'DSAM', 'RED', 'BT', 'MX', 'SI', 'VOL', 'CR', 'N',
-        // 新增缺失前缀
         'STZY', 'START', 'SONE', 'KIDM',
-        // 2024-2026 常见厂牌
         'ABF', 'ABW', 'ACHJ', 'CAWD', 'DLDSS', 'HMN', 'JUQ', 'JUR', 'MKMP', 'MISM',
         'MVSD', 'NNPJ', 'PPPE', 'SDAM', 'SDJS', 'SDMF', 'SDMM', 'TYSF', 'UMD', 'VENX',
         'WAAA', 'YUJ', 'FERA', 'BKD', 'BIJN', 'AARM', 'NHDTB', 'JUFD', 'JUTN', 'JRZE',
@@ -639,13 +527,10 @@
         'HJMO', 'HOKS', 'IENF', 'JUNY', 'KANO', 'KBMS', 'KIT', 'KMHR', 'KTRA', 'LULU',
         'MCT', 'MMUS', 'MRSS', 'NACR', 'NKKD', 'OKS', 'ONEX', 'PED', 'ROE', 'RKI',
         'SILK', 'SPLY', 'SQTE', 'SUPA', 'VEC', 'VENZ', 'YOCH',
-        // VR 系列
         '3DSVR', 'DSVR', 'MDVR', 'IPVR', 'KMVR', 'ATVR', 'PRVR', 'SAVR', 'CAVR', 'VRKM', 'SLVR',
-        // 下载站/素人常见
         'GOPJ'
     ].sort((a, b) => b.length - a.length);
 
-    // 预编译正则，同时保存前缀
     const CODE_PREFIX_PATTERNS = CODE_PREFIXES.map(p => ({
         prefix: p,
         regex: new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})(?![0-9])`, 'i'),
@@ -722,7 +607,7 @@
         return str.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 下载站压缩番号识别（数字站点前缀 + 番号前缀 + 数字） ==========
+    // ========== 下载站压缩番号识别 ==========
     const normalizeExplicitCensoredCode = (prefix, digits) => {
         if (!prefix || !digits) return null;
         const p = String(prefix).toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -739,8 +624,6 @@
         return p + '-' + d;
     };
 
-    // 识别“数字站点前缀 + 番号前缀 + 数字”的压缩名：
-    //   13dsvr01120 → DSVR-1120；h_1127gopj00559 → GOPJ-559；66cav3700066 → CAV-3700066
     const extractSitePrefixedCodeFromName = (name) => {
         if (!name) return null;
         let s = String(name);
@@ -755,20 +638,16 @@
             const letters = m[2];
             if (/^(HD|FHD|UHD|SD|FPS|CD|PART|DISC|DISK|DVD)$/i.test(letters)) return null;
             const fullPrefix = (m[1] + letters).toUpperCase();
-            // 已知番号前缀（259LUXU、300MAAN 等自带数字的厂牌）不按“站点前缀+番号”处理，交给 matchCodeByPrefix
             if (CODE_PREFIXES.includes(fullPrefix)) return null;
-            // 无码/素人前缀（1PONDO、CARIB、HEYZO 等）交给现有 numM 逻辑处理
             if (/^(1PONDO|CARIB|CARIBBEAN|PACO|PACOPACOMAMA|HEYDOUGA|TOKYOHOT|HEYZO|10MU|10MUSUME|1000GIRI|MURA|H4610|NAMA)$/i.test(fullPrefix)) return null;
             return { code: normalizeExplicitCensoredCode(letters, m[3]), rawMatch: m[0] };
         }
         return null;
     };
 
-    // ========== 分段信息提取（增强） ==========
-    // 识别 CD1/CD2、DISC1、PART1、P1、VOL1、EP1、1of2、番号后 A/B、上/下/前/后 等分段
+    // ========== 分段信息提取（支持 SP/SPECIAL） ==========
     const extractPartInfoFromFileName = (fileName, code) => {
         if (!fileName) return '';
-        // 先清理广告/站内前缀：www.98T.la@、h_1127 等，避免干扰分段识别
         const base = stripDomainPrefix(stripFileExt(fileName)).replace(/^h[_\-. ]*\d{2,5}[_\-. ]*/i, '');
         let U = base.toUpperCase();
         U = U.replace(/[\uFF21-\uFF3A]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
@@ -779,7 +658,7 @@
         const numLabel = n => { const v = parseInt(n, 10); return (v >= 1 && v <= 99) ? String(v) : ''; };
         const letterLabel = ch => { ch = String(ch || '').toUpperCase(); return /^[A-D]$/.test(ch) ? ch : ''; };
 
-        // 上/下/前/后（中/日混用）
+        // 上/下/前/后
         const zhTail = base.match(/(?:^|[\s._\-\[\(【（])((?:上|下|前|後|后)(?:集|部|篇|編|编|段)?)(?:$|[\s._\-\]\)】）])/);
         if (zhTail) {
             const v = zhTail[1];
@@ -787,7 +666,7 @@
             if (/下|後|后/.test(v)) return '2';
         }
 
-        // 下载站后缀 hhb2 / 4Ks2 / 60fps1
+        // 下载站后缀
         let m = U.match(/(?:^|[\s._\-])(?:HHB|HHC|HHD|HHH)0*([1-9]\d?)(?:$|[\s._\-])/);
         if (m) return numLabel(m[1]);
         m = U.match(/(?:4K|8K|HD|FHD|1080P|720P)[\s._\-]*S0*([1-9]\d?)(?:$|[\s._\-])/);
@@ -795,16 +674,23 @@
         m = U.match(/(?:4K|8K|UHD|HD|FHD|1080P|720P)?[\s._\-]*(?:60|30)FPS0*([1-9]\d?)(?:$|[\s._\-])/);
         if (m) return numLabel(m[1]);
 
-        // 明确分段词：文件名末尾的 CD1 / DISC1 / DVD1 / PART1 / P1 / VOL1 / EP1
+        // 明确分段词（CD/DISC/PART/VOL/EP）
         const tailZone = U.slice(Math.max(0, U.length - 96));
         m = tailZone.match(/(?:^|[\s._\-\[\(【（])(?:CD|DISC|DISK|DVD|PART|PT|P|VOL|VOLUME|EP|EPISODE)[\s._\-]*0*([1-9]\d?)[\s._\-\]\)】）]*$/);
         if (m) return numLabel(m[1]);
 
-        // 1of2 / 1-2 / 1_2
+        // 新增 SP/SPECIAL
+        let spMatch = U.match(/(?:^|[\s._\-\[\(【（])(SP|SPECIAL)[\s._-]*(\d{1,3})?(?=$|[\s._\-\)】）])/i);
+        if (spMatch) {
+            if (spMatch[2]) return numLabel(spMatch[2]);
+            else return 'SP';
+        }
+
+        // 1of2
         m = tailZone.match(/(?:^|[\s._\-])0*([1-9]\d?)\s*(?:OF|\/|／|-)\s*0*([1-9]\d?)(?:$|[\s._\-])/);
         if (m && parseInt(m[2], 10) > 1) return numLabel(m[1]);
 
-        // 已识别番号时，只检查“番号后紧贴”的分段尾巴：SSIS-090_CD2、SSIS-090 PART2、SSIS090A
+        // 番号后紧贴分段
         if (code) {
             const codeStr = String(code).toUpperCase();
             const parts = codeStr.split('-');
@@ -819,7 +705,6 @@
                     if (mm) return letterLabel(mm[1]);
                     mm = after.match(/^[\s._-]+(?:CD|DISC|DISK|DVD|PART|PT|P|VOL|VOLUME|EP|EPISODE)[\s._-]*0*([1-9]\d?)(?=$|[\s._\-\]\)】）])/);
                     if (mm) return numLabel(mm[1]);
-                    // 紧贴番号后的裸数字段：URVRSP00177_003 → 分段 003（保留前导零）
                     mm = after.match(/^[\s._-]+(\d{1,3})(?=$|[\s._\-\]\)】）])/);
                     if (mm) { const v = parseInt(mm[1], 10); if (v >= 1 && v <= 999) return mm[1]; }
                 }
@@ -869,7 +754,6 @@
         base = base.replace(/[-\s]+/g, ' ').trim();
 
         if (!base) return false;
-        // 剥离中文标记（中文字幕/无码/流出/破解/中字/字幕等），避免把纯标记误判为手动命名内容
         base = base.replace(/中文字幕|無修正|无码|流出|破解|中字|字幕|高清|無碼/g, ' ').replace(/\s+/g, ' ').trim();
         if (!base) return false;
         if (/[぀-ヿ㐀-鿿]/.test(base)) return true;
@@ -878,7 +762,7 @@
         return asciiWords.length >= 2 || asciiLen >= 10;
     };
 
-    // ========== 核心解析（共用） ==========
+    // ========== 核心解析（含分段清理增强） ==========
     const parseVideoInfo = (origTitle, safeSuffix) => {
         try {
             if (!origTitle) return null;
@@ -928,7 +812,6 @@
                     const rawFC2Match = rawForCode.match(rawFC2Pattern);
                     if (rawFC2Match) rawForCode = rawForCode.replace(rawFC2Match[0], ' ');
                 } else {
-                    // 下载站压缩名：数字站点前缀 + 番号（13dsvr01120 / h_1127gopj00559）
                     const siteCode = extractSitePrefixedCodeFromName(origTitle);
                     if (siteCode && siteCode.code) {
                         queryCode = siteCode.code;
@@ -1003,15 +886,15 @@
                     rawForCode = rawForCode.replace(nm[0], ' ').trim();
                 }
             }
-            // 增强分段识别：CD1/DISC1/PART1/VOL1/1of2/上·下/番号后A·B/裸数字段 等
+            // 增强分段识别（包含 SP/SPECIAL）
             if (!part) {
                 const detectedPart = extractPartInfoFromFileName(origTitle, queryCode);
                 if (detectedPart) {
                     part = normalizePartToken(detectedPart);
+                    // 移除所有可能的分段标记（包括 SP/SPECIAL）
                     rawForCode = rawForCode
-                        .replace(new RegExp(`(?:CD|DISC|DISK|DVD|PART|PT|P|VOL|VOLUME|EP|EPISODE)[\\s._-]*0*${escapeRegExp(detectedPart)}`, 'i'), ' ')
+                        .replace(new RegExp(`(?:CD|DISC|DISK|DVD|PART|PT|P|VOL|VOLUME|EP|EPISODE|SP|SPECIAL)[\\s._-]*0*${escapeRegExp(detectedPart)}`, 'i'), ' ')
                         .replace(new RegExp(`(?:上|下|前|後|后)(?:集|部|篇|編|编|段)?(?=[\\s._\\-]|$)`, 'g'), ' ');
-                    // 裸数字段（如 urvrsp00177_003 的 _003）从标题中剥离，保留前导零
                     if (/^\d+$/.test(detectedPart)) {
                         rawForCode = rawForCode.replace(new RegExp(`[\\s._-]${escapeRegExp(detectedPart)}(?=[\\s._\\-]|$)`, 'g'), ' ');
                     }
@@ -1025,7 +908,6 @@
             cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
             cleanTitle = cleanTitle.replace(AD_BADGES, ' ');
             cleanTitle = cleanTitle.replace(GARBAGE_REGEX, ' ');
-            // 保留标题内部原有间隔符（下划线暂不替换，最终在 buildNewName 统一处理）
             cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim();
             cleanTitle = removeCodeFromTitle(cleanTitle, baseCode);
 
@@ -1036,20 +918,18 @@
         }
     };
 
-    // ========== 构建新名称（共用） ==========
-    // 统一格式：番号-分段 标题 女优 日期【标记】.后缀
+    // ========== 构建新名称 ==========
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
         let cleanTitle = removeCodeFromTitle(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
         let name = vInfo.fullCode;
         if (cleanTitle) name += ' ' + cleanTitle;
         if (actresses && actresses.length) {
-            // 别名标准化 + 按折叠键去重（三上悠亜/Mikami Yua → 三上悠亚，只保留一个）
             const actressList = [];
             const seen = new Set();
             actresses.forEach(a => {
                 const std = getStandardActressName(a);
-                if (!std || !isPlausibleActressToken(std)) return; // 别名标准化 + 过滤标题词污染
+                if (!std || !isPlausibleActressToken(std)) return;
                 const key = folderNameKey(std);
                 if (!key || seen.has(key)) return;
                 seen.add(key);
@@ -1060,7 +940,7 @@
                 if (!name.includes(actressStr)) name += ' ' + actressStr;
             }
         }
-        if (dateStr) name += '-' + dateStr; // 日期放在标记之前：番号-分段-标题-女优-日期
+        if (dateStr) name += '-' + dateStr;
         if (vInfo.markers && vInfo.markers.length) {
             const uniq = [...new Set(vInfo.markers)].filter(Boolean);
             const existingMarkers = name.match(/【[^】]*】/g) || [];
@@ -1070,7 +950,6 @@
         if (suffix) name += suffix;
         name = name.replace(/\s+/g, ' ').trim();
         name = name.replace(/\s+\./g, '.');
-        // 统一所有下划线为连字符
         name = name.replace(/_/g, '-');
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
@@ -1092,7 +971,7 @@
     // ========== DOMParser 辅助 ==========
     const parseHTML = (html) => new DOMParser().parseFromString(html, "text/html");
 
-    // ========== 多站刮削（改用 DOMParser，anonymous: true） ==========
+    // ========== 多站刮削 ==========
     const normDate = d => {
         if (!d) return '';
         const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
@@ -1113,7 +992,6 @@
         next();
     };
 
-    // 判断页面/标题是否为“未找到/404”类内容，避免把 404 页标题当成片名
     const isNotFoundTitle = (t) => /404|not\s*found|page\s*not\s*found|no\s*result|找不到|页面不存在|查無|查无|無此|无此/i.test(String(t || ''));
 
     const fetchJavlib = (code, ok, fail) => {
@@ -1423,7 +1301,7 @@
         });
     };
 
-    // ========== 统一远程信息获取（含演员补全 + TTL + 失败负缓存） ==========
+    // ========== 统一远程信息获取 ==========
     const fetchRemoteInfo = (code, callback) => {
         const key = code.toUpperCase();
         if (isInfoCacheValid(key)) { callback(infoCache[key]); return; }
@@ -1494,7 +1372,6 @@
     };
 
     // ========== 改名主流程 ==========
-    // 获取信息并计算新名称（不发送）；callback(newName, found)
     const getTargetName = (vInfo, suffix, addDate, translateChinese, callback) => {
         const code = vInfo.queryCode;
         const key = code.toUpperCase();
@@ -1523,7 +1400,6 @@
             if (newName) {
                 send_115(fid, newName, vInfo.fullCode, origFilename, callback);
             } else {
-                // 手动命名保护：源站失败时不覆盖已有人工命名的文件
                 if (origFilename && hasManualNamePayload(origFilename, vInfo.queryCode)) {
                     showPageNotification(`${vInfo.fullCode} 已保护手动命名，跳过`, 'info', 3000);
                 } else {
@@ -1536,7 +1412,6 @@
 
     const local_rename = (fid, vInfo, suffix, addDate, callback, origFilename) => {
         const newName = buildNewName(vInfo, vInfo.localTitle, [], vInfo.date, suffix);
-        // 手动命名保护：本地加工不把带人工命名的文件降级为“纯番号”
         const bareName = buildNewName(vInfo, '', [], vInfo.date, suffix);
         if (origFilename && hasManualNamePayload(origFilename, vInfo.queryCode) && newName === bareName) {
             showPageNotification(`${vInfo.fullCode} 已保护手动命名，跳过`, 'info', 3000);
@@ -1546,7 +1421,7 @@
         send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     };
 
-    // ========== 批量处理（预览确认 + 完成回调只执行一次） ==========
+    // ========== 批量处理（预览） ==========
     const buildPreviewRows = (parsedItems, isLocal, addDate, translateChinese, done) => {
         const rows = [];
         if (isLocal) {
@@ -1784,7 +1659,7 @@
         } else { GM_setClipboard(text); showPageNotification('已复制到剪贴板', 'success', 3000); }
     }
 
-    // ========== 归档功能（优化：去重预取演员） ==========
+    // ========== 归档功能 ==========
     const getSeriesFromCode = code => {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
         if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
@@ -1913,7 +1788,7 @@
         }
     };
 
-    // ========== 分桶归档（番号前缀 + 数字段） ==========
+    // ========== 分桶归档 ==========
     const getBucketFolderName = (code) => {
         const c = String(code).toUpperCase();
         if (/^FC2-PPV/.test(c)) return 'FC2';
@@ -1962,7 +1837,7 @@
         });
     };
 
-    // ========== JavDB 评分（优化：去重缓存） ==========
+    // ========== JavDB 评分 ==========
     const getJavdbRating = () => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         const cnt = $items.length;
@@ -2133,4 +2008,5 @@
             showPageNotification(`归档根目录设置成功: "${name}"`, 'success', 5000);
         }
     }
+
 })();
