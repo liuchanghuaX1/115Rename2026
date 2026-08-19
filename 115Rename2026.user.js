@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         2.1.3
-// @description     115视频整理：右键菜单保留｜中文翻译｜演员补全｜多站改名+归档+评分+备份｜性能优化｜修复SP分段残留
+// @version         2.2.1
+// @description     115视频整理：FC2变体｜无码识别｜冷门番号｜演员性别优先｜多站刮削｜翻译｜归档｜评分｜完整功能
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -11,6 +11,8 @@
 // @domain          xslist.org
 // @domain          javdb.com
 // @domain          fc2ppvdb.com
+// @domain          avsox.host
+// @domain          avmoo.host
 // @connect         javbus.com
 // @connect         javlibrary.com
 // @connect         xslist.org
@@ -20,6 +22,8 @@
 // @connect         client-rapi-missav.recombee.com
 // @connect         oneshot-free.www.deepl.com
 // @connect         api.mymemory.translated.net
+// @connect         avsox.host
+// @connect         avmoo.host
 // @grant           GM_notification
 // @grant           GM_xmlhttpRequest
 // @grant           GM_setValue
@@ -38,7 +42,9 @@
 (function () {
     "use strict";
 
-    // ========== UI 初始化 ==========
+    // ========================================================================
+    // 1. UI 初始化
+    // ========================================================================
     const rootInfoId = 'archive-root-info-' + Date.now();
     function cleanupExistingRootInfo() {
         try {
@@ -74,7 +80,6 @@
     const negativeCache = JSON.parse(GM_getValue('jb_negativeCache', '{}'));
     const folderCidCache = {};
 
-    // ========== 缓存 TTL + 失败负缓存 ==========
     const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
     const NEGATIVE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
     const isInfoCacheValid = (code) => {
@@ -91,7 +96,9 @@
     };
     const markNegativeCached = (code) => { negativeCache[code] = { cachedAt: Date.now() }; };
 
-    // ========== 字符串辅助 ==========
+    // ========================================================================
+    // 2. 工具函数
+    // ========================================================================
     const stripFileExt = (name) => { const s = String(name || ''); const idx = s.lastIndexOf('.'); return idx > 0 ? s.slice(0, idx) : s; };
     const escapeRegExp = (str) => String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const normalizePartToken = (p) => {
@@ -145,8 +152,6 @@
             .replace(/[\s\-_·・.,，。()（）\[\]【】「」『』]+/g, '')
             .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]/g, '');
     };
-
-    // ========== 查询变体 ==========
     const getCodeQueryVariants = (code) => {
         const variants = [String(code || '')];
         const noDash = String(code || '').replace(/-/g, '');
@@ -163,143 +168,66 @@
         return [...new Set(variants)];
     };
 
-    // ========== 女优别名映射表（完整） ==========
+    // ========================================================================
+    // 3. 女优别名映射表（精简常用）
+    // ========================================================================
     const actressAliasMap = {
-        '三上悠亜': '三上悠亚', 'Mikami Yua': '三上悠亚', 'みかみゆあ': '三上悠亚', 'ミカミユア': '三上悠亚', 'Yua Mikami': '三上悠亚',
-        '深田えいみ': '深田咏美', 'Fukada Eimi': '深田咏美', 'ふかだえいみ': '深田咏美', 'Eimi Fukada': '深田咏美',
-        '天使もえ': '天使萌', 'Amatsuka Moe': '天使萌', 'あまつかもえ': '天使萌', 'Moe Amatsuka': '天使萌',
-        '桃乃木かな': '桃乃木香奈', 'Momonogi Kana': '桃乃木香奈', 'もものぎかな': '桃乃木香奈', 'Kana Momonogi': '桃乃木香奈',
-        '凪ひかる': '凪光', 'Nagi Hikaru': '凪光', 'なぎひかる': '凪光', 'Hikaru Nagi': '凪光', '有栖花あか': '凪光', 'Ariska Aka': '凪光',
-        '坂道みる': '坂道美琉', 'Sakamichi Miru': '坂道美琉', 'さかみちみる': '坂道美琉',
-        '棗ゆうの': '枣柚乃', 'Natsume Yuuno': '枣柚乃', 'なつめゆうの': '枣柚乃',
-        '小野六花': '小野六花', 'Ono Rokka': '小野六花', 'おのろっか': '小野六花',
-        '高橋しょう子': '高桥圣子', 'Takahashi Shoko': '高桥圣子', 'たかはししょうこ': '高桥圣子', '高橋聖子': '高桥圣子',
-        '神木隆之介': '神木隆之介',
-        '吉高宁々': '吉高宁宁', 'Yoshitaka Nene': '吉高宁宁', 'よしたかねね': '吉高宁宁',
-        '明里つむぎ': '明里紬', 'Akari Tsumugi': '明里紬', 'あかりつむぎ': '明里紬',
-        '唯井まひろ': '唯井真寻', 'Yui Mahiro': '唯井真寻', 'ゆいまひろ': '唯井真寻', 'Mahiro Yui': '唯井真寻',
-        '枢木あおい': '枢木葵', 'Kururugi Aoi': '枢木葵', 'くるるぎあおい': '枢木葵',
-        '河北彩花': '河北彩花', 'Kawakita Saika': '河北彩花', 'かわきたさいか': '河北彩花',
-        '松本いちか': '松本一香', 'Matsumoto Ichika': '松本一香', 'まつもといちか': '松本一香',
-        '石原希望': '石原希望', 'Ishihara Nozomi': '石原希望', 'いしはらのぞみ': '石原希望',
-        '桜空もも': '樱空桃', 'Sakura Momo': '樱空桃', 'さくらもも': '樱空桃',
-        '涼森れむ': '凉森玲梦', 'Suzumori Remu': '凉森玲梦', 'すずもりれむ': '凉森玲梦',
-        '琴井雏绘': '琴井雏绘', 'Kotoi Hinae': '琴井雏绘',
-        '北野未奈': '北野未奈', 'Kitano Mina': '北野未奈', 'きたのみな': '北野未奈', '北野みな': '北野未奈',
-        '神納花': '神納花', '神纳花': '神納花',
-        '美谷朱里': '美谷朱里', 'Mitani Akari': '美谷朱里', 'みたにあかり': '美谷朱里',
-        '七沢みあ': '七泽米亚', 'Nanasawa Mia': '七泽米亚', 'ななさわみあ': '七泽米亚',
-        '河南実里': '河南实里', 'Kawami Minori': '河南实里',
-        '宮下玲奈': '宫下玲奈', 'Miyashita Rena': '宫下玲奈', 'みやしたれな': '宫下玲奈',
-        '紗倉まな': '纱仓真菜', 'Sakura Mana': '纱仓真菜', 'さくらまな': '纱仓真菜', 'Mana Sakura': '纱仓真菜',
-        '湊莉久': '凑莉久', 'Minato Riku': '凑莉久', 'みなとりく': '凑莉久', 'Riku Minato': '凑莉久',
-        '本庄鈴': '本庄铃', 'Honjou Suzu': '本庄铃', 'ほんじょうすず': '本庄铃',
-        '西宮ゆめ': '西宫梦', 'Nishimiya Yume': '西宫梦', 'にしみやゆめ': '西宫梦',
-        '鈴木真夕': '铃木真夕', 'Suzuki Mayu': '铃木真夕', 'すずきまゆ': '铃木真夕',
-        '永野いちか': '永野一夏', 'Nagano Ichika': '永野一夏', 'ながのいちか': '永野一夏',
-        '金松季歩': '金松季步', 'Kanamatsu Kiho': '金松季步',
-        '古川いおり': '古川伊织', 'Furukawa Iori': '古川伊织', 'ふるかわいおり': '古川伊织',
-        '葵司': '葵司', 'Aoi Tsukasa': '葵司', 'あおいつかさ': '葵司',
-        '桜乃ゆら': '樱乃由华', 'Sakurano Yura': '樱乃由华', 'さくらのゆら': '樱乃由华',
-        '桜井歩': '樱井步', 'Sakurai Ayumi': '樱井步', 'さくらいあゆみ': '樱井步',
-        '波多野結衣': '波多野结衣', 'Hatano Yui': '波多野结衣', 'はたのゆい': '波多野结衣',
-        '深澤せりな': '深泽芹香', 'Fukasawa Serina': '深泽芹香',
-        '小倉奈々': '小仓奈奈', 'Ogura Nana': '小仓奈奈', 'おぐらなな': '小仓奈奈',
+        '三上悠亜': '三上悠亚', 'Mikami Yua': '三上悠亚',
+        '深田えいみ': '深田咏美', 'Fukada Eimi': '深田咏美',
+        '天使もえ': '天使萌', 'Amatsuka Moe': '天使萌',
+        '桃乃木かな': '桃乃木香奈', 'Momonogi Kana': '桃乃木香奈',
+        '凪ひかる': '凪光', 'Nagi Hikaru': '凪光',
+        '坂道みる': '坂道美琉', 'Sakamichi Miru': '坂道美琉',
+        '高橋しょう子': '高桥圣子', 'Takahashi Shoko': '高桥圣子',
+        '河北彩花': '河北彩花', 'Kawakita Saika': '河北彩花',
+        '松本いちか': '松本一香', 'Matsumoto Ichika': '松本一香',
+        '桜空もも': '樱空桃', 'Sakura Momo': '樱空桃',
+        '涼森れむ': '凉森玲梦', 'Suzumori Remu': '凉森玲梦',
+        '北野未奈': '北野未奈', 'Kitano Mina': '北野未奈',
+        '美谷朱里': '美谷朱里', 'Mitani Akari': '美谷朱里',
+        '七沢みあ': '七泽米亚', 'Nanasawa Mia': '七泽米亚',
+        '宮下玲奈': '宫下玲奈', 'Miyashita Rena': '宫下玲奈',
+        '紗倉まな': '纱仓真菜', 'Sakura Mana': '纱仓真菜',
+        '本庄鈴': '本庄铃', 'Honjou Suzu': '本庄铃',
+        '西宮ゆめ': '西宫梦', 'Nishimiya Yume': '西宫梦',
+        '鈴木真夕': '铃木真夕', 'Suzuki Mayu': '铃木真夕',
+        '古川いおり': '古川伊织', 'Furukawa Iori': '古川伊织',
+        '葵司': '葵司', 'Aoi Tsukasa': '葵司',
+        '波多野結衣': '波多野结衣', 'Hatano Yui': '波多野结衣',
+        '小倉奈々': '小仓奈奈', 'Ogura Nana': '小仓奈奈',
         '鈴木心春': '铃木心春', 'Suzuki Koharu': '铃木心春',
-        '鈴木涼那': '铃木凉那', 'Suzuki Rina': '铃木凉那',
-        '八掛うみ': '八挂海', 'Yakeno Umi': '八挂海', 'やかけうみ': '八挂海',
-        '横宮七海': '横宫七海', 'Yokomiya Nanami': '横宫七海', 'よこみやななみ': '横宫七海',
-        '八木奈々': '八木奈奈', 'Yagi Nana': '八木奈奈', 'やぎなな': '八木奈奈',
-        '安齋らら': '安斋拉拉', 'Anzai Rara': '安斋拉拉', 'あんざいらら': '安斋拉拉', '田中宁宁': '安斋拉拉',
-        '鈴木一徹': '铃木一彻', 'Suzuki Issei': '铃木一彻',
-        '新井エリス': '新有菜', '新井艾丽丝': '新有菜', 'Arisu Arai': '新有菜', 'Yua Nanami': '新有菜', '七沢ゆあ': '新有菜', '新有菜': '新有菜',
-        '架乃ゆら': '架乃由罗', 'Kano Yura': '架乃由罗', 'かのゆら': '架乃由罗',
-        '橋本ありな': '桥本有菜', 'Hashimoto Arina': '桥本有菜', 'はしもとありな': '桥本有菜', 'Arina Hashimoto': '桥本有菜',
-        '飯岡かなこ': '饭冈佳奈子', 'Iioka Kanako': '饭冈佳奈子', 'いいおかかなこ': '饭冈佳奈子',
-        '三宮つばき': '三宫椿', 'Sannomiya Tsubaki': '三宫椿', 'さんのみやつばき': '三宫椿', 'Tsubaki Sannomiya': '三宫椿',
-        '小野寺地': '小野寺地', 'Onodera Rina': '小野寺地',
-        '乙都絵美': '乙都绘美', 'Oto Emi': '乙都绘美',
-        '涼海みさ': '凉海美沙', 'Suzumi Misa': '凉海美沙',
-        '山手梨愛': '山手梨爱', 'Yamamate Ria': '山手梨爱', 'やまてりあ': '山手梨爱', 'Ria Yamate': '山手梨爱',
-        '加藤なつ希': '加藤夏希', 'Kato Natsuki': '加藤夏希',
-        '神宮寺ナオ': '神宫寺奈绪', 'Jinguji Nao': '神宫寺奈绪', 'じんぐうじなお': '神宫寺奈绪', 'Nao Jinguji': '神宫寺奈绪',
-        '結月共': '结月共', 'Yuzuki Aoi': '结月共', '結城りの': '结月共',
-        '羽咲みは': '羽咲美', 'Usa Miha': '羽咲美',
-        '小倉由菜': '小仓由菜', 'Ogura Yuna': '小仓由菜', 'おぐらゆな': '小仓由菜', 'Yuna Ogura': '小仓由菜',
-        '唯香': '唯香', 'Yui Mitsuha': '唯香',
-        '七瀬アリス': '七濑爱丽丝', 'Nanase Alice': '七濑爱丽丝', 'ななせありす': '七濑爱丽丝', 'Alice Nanase': '七濑爱丽丝',
-        '七瀬くるみ': '七濑胡桃', 'Nanase Kurumi': '七濑胡桃', 'ななせくるみ': '七濑胡桃',
-        '瀬名美紅': '濑名美红', 'Sena Miku': '濑名美红',
-        '沖田杏梨': '冲田杏梨', 'Okita Anri': '冲田杏梨', 'おきたあんり': '冲田杏梨', 'Anri Okita': '冲田杏梨',
-        '白石茉莉奈': '白石茉莉奈', 'Shiraishi Marina': '白石茉莉奈', 'しらいしまりな': '白石茉莉奈',
-        '大槻ひびき': '大槻响', 'Otsuki Hibiki': '大槻响', 'おおつきひびき': '大槻响', 'Hibiki Otsuki': '大槻响',
-        '友田彩也香': '友田彩也香', 'Tomoda Ayaka': '友田彩也香', 'ともだあやか': '友田彩也香',
-        '稲森しほ': '稻森诗穗', 'Inamori Shiho': '稻森诗穗',
-        '希崎ジェシカ': '希崎杰西卡', 'Kizaki Jessica': '希崎杰西卡', 'きざきじぇしか': '希崎杰西卡', 'Jessica Kizaki': '希崎杰西卡',
-        '希岛あいり': '希岛爱理', 'Kijima Airi': '希岛爱理', 'きじまあいり': '希岛爱理', 'Airi Kijima': '希岛爱理',
-        '松永さな': '松永纱奈', 'Matsunaga Sana': '松永纱奈', 'まつながさな': '松永纱奈',
-        '小湊よつ葉': '小凑四叶', 'Kominato Yotsuha': '小凑四叶', 'こみなとよつは': '小凑四叶', 'Yotsuha Kominato': '小凑四叶',
-        '奥田咲': '奥田咲', 'Okuda Saki': '奥田咲', 'おくださき': '奥田咲',
-        '推川ゆうり': '推川悠里', 'Oshikawa Yuuri': '推川悠里', 'おしかわゆうり': '推川悠里', 'Yuri Oshikawa': '推川悠里',
-        '響乃うた': '响乃音', 'Hibino Uta': '响乃音', 'ひびのうた': '响乃音',
-        '伊藤舞雪': '伊藤舞雪', 'Ito Miyuki': '伊藤舞雪', 'いとうまゆき': '伊藤舞雪', 'Mayuki Ito': '伊藤舞雪',
-        '岡本葵': '冈本葵', 'Okamoto Aoi': '冈本葵', 'おかもとあおい': '冈本葵',
-        'Hirose Yuria': '广濑百合', 'ひろせゆりあ': '广濑百合',
-        '美谷朱音': '美谷朱音', 'Mitani Akane': '美谷朱音', 'みたにあかね': '美谷朱音', 'Akane Mitani': '美谷朱音',
-        '天海つばさ': '天海翼', 'Amami Tsubasa': '天海翼', 'あまみつばさ': '天海翼', 'Tsubasa Amami': '天海翼',
-        '希德爱': '希德爱', 'Kieda Ai': '希德爱',
-        '初川みなみ': '初川南', 'Hatsukawa Minami': '初川南', 'はつかわみなみ': '初川南', 'Minami Hatsukawa': '初川南',
-        '浜崎真緒': '滨崎真绪', 'Hamasaki Mao': '滨崎真绪', 'はまさきまお': '滨崎真绪', 'Mao Hamasaki': '滨崎真绪',
-        '上原亜衣': '上原亚衣', 'Uehara Ai': '上原亚衣', 'うえはらあい': '上原亚衣', 'Ai Uehara': '上原亚衣',
-        '彩美旬果': '彩美旬果', 'Ayami Shunka': '彩美旬果', 'あやみしゅんか': '彩美旬果',
-        '大橋未久': '大桥未久', 'Ohashi Mihuku': '大桥未久', 'おおはしみふく': '大桥未久',
-        '西野翔': '西野翔', 'Nishino Sho': '西野翔', 'にしのしょう': '西野翔',
-        '吉沢明歩': '吉泽明步', 'Yoshizawa Akiho': '吉泽明步', 'よしざわあきほ': '吉泽明步', 'Akiho Yoshizawa': '吉泽明步',
-        '蒼井そら': '苍井空', 'Sora Aoi': '苍井空', 'あおいそら': '苍井空', 'Aoi Sora': '苍井空',
-        '小澤マリア': '小泽玛利亚', 'Ozawa Maria': '小泽玛利亚', 'おざわまりあ': '小泽玛利亚', 'Maria Ozawa': '小泽玛利亚',
-        '立花るい': '立花琉璃', 'Tachibana Rui': '立花琉璃', 'たちばなるい': '立花琉璃',
-        '冴島奈緒': '冴岛奈绪', 'Saejima Nao': '冴岛奈绪',
-        '並木塔': '并木塔', 'Namiki Tou': '并木塔',
-        '鈴木一真': '铃木一真', 'Suzuki Kazuma': '铃木一真',
-        '夏目響': '夏目响', 'Natsume Hibiki': '夏目响', 'なつめひびき': '夏目响', 'Hibiki Natsume': '夏目响',
-        '松本梨穗': '松本梨穗', 'Matsumoto Riho': '松本梨穗',
-        '蘭々': '蘭々', '蘭蘭': '蘭々', 'RAN': '蘭々', 'Ran': '蘭々',
-        '由愛可奈': '由愛可奈', '由爱可奈': '由愛可奈',
+        '八掛うみ': '八挂海', 'Yakeno Umi': '八挂海',
+        '横宮七海': '横宫七海', 'Yokomiya Nanami': '横宫七海',
+        '八木奈々': '八木奈奈', 'Yagi Nana': '八木奈奈',
+        '安齋らら': '安斋拉拉', 'Anzai Rara': '安斋拉拉',
+        '橋本ありな': '桥本有菜', 'Hashimoto Arina': '桥本有菜',
+        '三宮つばき': '三宫椿', 'Sannomiya Tsubaki': '三宫椿',
+        '山手梨愛': '山手梨爱', 'Yamamate Ria': '山手梨爱',
+        '神宮寺ナオ': '神宫寺奈绪', 'Jinguji Nao': '神宫寺奈绪',
+        '小倉由菜': '小仓由菜', 'Ogura Yuna': '小仓由菜',
+        '七瀬アリス': '七濑爱丽丝', 'Nanase Alice': '七濑爱丽丝',
+        '沖田杏梨': '冲田杏梨', 'Okita Anri': '冲田杏梨',
+        '白石茉莉奈': '白石茉莉奈', 'Shiraishi Marina': '白石茉莉奈',
+        '大槻ひびき': '大槻响', 'Otsuki Hibiki': '大槻响',
+        '友田彩也香': '友田彩也香', 'Tomoda Ayaka': '友田彩也香',
+        '希崎ジェシカ': '希崎杰西卡', 'Kizaki Jessica': '希崎杰西卡',
+        '希岛あいり': '希岛爱理', 'Kijima Airi': '希岛爱理',
+        '小湊よつ葉': '小凑四叶', 'Kominato Yotsuha': '小凑四叶',
+        '奥田咲': '奥田咲', 'Okuda Saki': '奥田咲',
+        '推川ゆうり': '推川悠里', 'Oshikawa Yuuri': '推川悠里',
+        '伊藤舞雪': '伊藤舞雪', 'Ito Miyuki': '伊藤舞雪',
+        '美谷朱音': '美谷朱音', 'Mitani Akane': '美谷朱音',
+        '天海つばさ': '天海翼', 'Amami Tsubasa': '天海翼',
+        '初川みなみ': '初川南', 'Hatsukawa Minami': '初川南',
+        '浜崎真緒': '滨崎真绪', 'Hamasaki Mao': '滨崎真绪',
+        '上原亜衣': '上原亚衣', 'Uehara Ai': '上原亚衣',
+        '彩美旬果': '彩美旬果', 'Ayami Shunka': '彩美旬果',
+        '大橋未久': '大桥未久', 'Ohashi Mihuku': '大桥未久',
+        '吉沢明歩': '吉泽明步', 'Yoshizawa Akiho': '吉泽明步',
+        '蒼井そら': '苍井空', 'Sora Aoi': '苍井空',
+        '小澤マリア': '小泽玛利亚', 'Ozawa Maria': '小泽玛利亚',
         'JULIA': 'JULIA', 'AIKA': 'AIKA', 'RION': 'RION',
-        'Himari': 'Himari', 'HIMARI': 'Himari', 'SAKURA': 'SAKURA',
-        '水嶋杏樹': '水嶋杏樹', '水岛杏树': '水嶋杏樹',
-        '横山美雪': '横山美雪',
-        '朝霧ましろ': '朝霧ましろ', '朝雾真白': '朝霧ましろ',
-        '白星優菜': '白星優菜', '白星优菜': '白星優菜',
-        '琴音華': '琴音華', '琴音华': '琴音華',
-        '堀北実来': '堀北実来', '堀北实来': '堀北実来',
-        '花音うらら': '花音うらら', '胡桃さくら': '胡桃さくら',
-        '西田那津': '西田那津',
-        '川辺ゆり': '川辺ゆり', '川边ゆり': '川辺ゆり',
-        '安藤朋花': '安藤朋花',
-        '桃瀬友梨奈': '桃瀬友梨奈', '桃濑友梨奈': '桃瀬友梨奈',
-        '寺崎泉': '寺崎泉',
-        '宮前幸恵': '宮前幸恵', '宫前幸惠': '宮前幸恵',
-        '上原千尋': '上原千尋', '上原千寻': '上原千尋',
-        '真木静香': '真木静香',
-        '西条めぐみ': '西条めぐみ',
-        '佐伯麗子': '佐伯麗子', '佐伯丽子': '佐伯麗子',
-        '赤川絵理': '赤川絵理', '赤川絵里': '赤川絵理',
-        '希のぞみ': '希のぞみ', '七海ろあ': '七海ろあ', '葵もか': '葵もか',
-        '伊藤好玲': '伊藤好玲', '松丸香澄': '松丸香澄', '夏芽さき': '夏芽さき',
-        '杏ここ': '杏ここ', '雛乃ゆな': '雛乃ゆな', '西野めぐ': '西野めぐ',
-        '一二三ゆぅり': '一二三ゆぅり',
-        '並木あいな': '並木あいな', '并木あいな': '並木あいな',
-        '上白美央': '上白美央', '美丘さとみ': '美丘さとみ', '白石さき': '白石さき',
-        '南あゆみ': '南あゆみ', '中山香苗': '中山香苗',
-        '冬愛ことね': '冬愛ことね', '冬爱ことね': '冬愛ことね',
-        '北城希': '北城希',
-        '沢口莉々子': '沢口梨々子', '沢口梨々子': '沢口梨々子',
-        'AI美園和花': 'AI美園和花', '美園和花': '美園和花',
-        '涼菜波美': '涼菜波美',
-        'KOKONO NATSUKA': 'KOKONO NATSUKA', 'KOKONO': 'KOKONO NATSUKA', 'NATSUKA': 'KOKONO NATSUKA',
-        'Rio': 'Rio', 'Momo': 'Momo', 'RIO': 'Rio', 'MOMO': 'Momo',
-        '伊藤優': '伊藤优', 'Ito Yu': '伊藤优',
+        'Rio': 'Rio', 'Momo': 'Momo',
     };
 
     const getStandardActressName = (name) => {
@@ -325,7 +253,9 @@
         return true;
     };
 
-    // ========== 全局任务锁 ==========
+    // ========================================================================
+    // 4. 任务控制
+    // ========================================================================
     window.renameInProgress = false;
 
     function runTasksWithLimit(tasks, limit, intervalMs, doneAll) {
@@ -385,7 +315,9 @@
         finish() { this.paused = false; this.update(this.total); setTimeout(() => $('#task-progress-box').fadeOut(300), 800); }
     };
 
-    // ========== Toast 通知 ==========
+    // ========================================================================
+    // 5. Toast 通知
+    // ========================================================================
     const toastQueue = [];
     let toastActive = 0;
     const TOAST_MAX = 3;
@@ -422,7 +354,9 @@
     $(window).on('load', initializeRootInfo);
     if (document.readyState === 'complete') initializeRootInfo();
 
-    // ========== 菜单 ==========
+    // ========================================================================
+    // 6. 菜单定义
+    // ========================================================================
     const rename_list = `
         <li id="rename_list">
             <a id="local_code_process" class="mark" href="javascript:;">本地番号加工</a>
@@ -446,7 +380,9 @@
     const javdbSearchBase = javdbBase + "/search?q=";
     const fc2ppvdbBase = "https://fc2ppvdb.com/articles/";
 
-    // ========== 广告清理 ==========
+    // ========================================================================
+    // 7. 广告与标记清理
+    // ========================================================================
     const stripDomainPrefix = (filename) => {
         const idx = filename.lastIndexOf('@');
         return idx === -1 ? filename : filename.substring(idx + 1).trim();
@@ -458,7 +394,6 @@
         return '';
     };
 
-    // ========== 垃圾词与标记 ==========
     const GARBAGE_WORDS = [
         'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
         'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
@@ -486,8 +421,10 @@
         });
     };
 
-    // ========== 番号前缀库 ==========
-    const CODE_PREFIXES = [
+    // ========================================================================
+    // 8. 番号前缀库（含自动扩展双字母和单字母）
+    // ========================================================================
+    let CODE_PREFIXES = [
         'LEGSJAPAN', 'AYAKISAKI', 'SPERMMANIA', 'FELLATIOJAPAN',
         'S2MCR', 'MXVR', 'SIVR',
         'T28', 'S2M', '300MAAN', '200GANA', '259LUXU', '277DCV', '230GANA', '261ADA',
@@ -518,7 +455,6 @@
         'JHZD', 'NFDM', 'CGAD', 'CGBD', 'CHSD', 'CUSD', 'CHSH', 'CMV', 'PAED', 'RGI', 'ZARD', 'ZATS', 'ZDAD', 'ZKV',
         'COSETT', 'MXGS', 'MX3DS', 'IPBZ', 'FSDSS', 'SVMGM', 'MIDA',
         'DSAM', 'RED', 'BT', 'MX', 'SI', 'VOL', 'CR', 'N',
-        // 新增主流厂牌
         'SONE', 'START', 'ABF', 'HMN', 'JUQ', 'JUR', 'WAAA', 'DLDSS', 'CAWD', 'MKMP',
         'MISM', 'MVSD', 'NNPJ', 'PPPE', 'SDAM', 'SDJS', 'SDMF', 'SDMM', 'TYSF', 'UMD',
         'VENX', 'YUJ', 'FERA', 'BKD', 'BIJN', 'AARM', 'NHDTB', 'JUFD', 'JUTN', 'JRZE',
@@ -527,15 +463,13 @@
         'HJMO', 'HOKS', 'IENF', 'JUNY', 'KANO', 'KBMS', 'KIT', 'KMHR', 'KTRA', 'LULU',
         'MCT', 'MMUS', 'MRSS', 'NACR', 'NKKD', 'OKS', 'ONEX', 'PED', 'ROE', 'RKI',
         'SILK', 'SPLY', 'SQTE', 'SUPA', 'VEC', 'VENZ', 'YOCH',
-        // VR系列
         '3DSVR', 'DSVR', 'MDVR', 'IPVR', 'KMVR', 'ATVR', 'PRVR', 'SAVR', 'CAVR', 'VRKM', 'SLVR',
-        // 下载站/素人/无码
         'GOPJ', 'HEYZO', '1PONDO', 'CARIB', 'CARIBBEAN', 'PACO', 'PACOPACOMAMA',
         'TOKYO-HOT', 'TOKYOHOT', '10MU', '10MUSUME', '1000GIRI', 'MURA', 'H4610', 'NAMA',
         'STZY', 'KIDM', 'ACHJ'
     ];
 
-    // ========== 自动扩展：添加所有双字母组合和单字母 ==========
+    // 自动扩展双字母和单字母
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     for (let i = 0; i < 26; i++) {
         for (let j = 0; j < 26; j++) {
@@ -551,8 +485,6 @@
             CODE_PREFIXES.push(prefix);
         }
     }
-
-    // 保持长优先
     CODE_PREFIXES.sort((a, b) => b.length - a.length);
 
     const CODE_PREFIX_PATTERNS = CODE_PREFIXES.map(p => ({
@@ -583,16 +515,20 @@
         return null;
     };
 
+    // ========================================================================
+    // 9. FC2 提取与无码检测（增强）
+    // ========================================================================
     const extractFC2Code = (str) => {
         const patterns = [
-            /\bfc(\d{5,7})\b/i,
-            /\bFC2[\s_-]*PPV[\s_-]*(\d{5,7})\b/i,
-            /\bFC2PPV[\s_-]*(\d{5,7})\b/i,
-            /\bFC2[\s_-]+(\d{5,7})\b/i,
-            /\bFC2-(\d{5,7})\b/i,
-            /\bFC2(\d{5,7})\b/i,
-            /\bPPV[\s_-]*(\d{5,7})\b/i,
-            /\bF[\s_-]*(\d{5,7})\b(?!\d)/i,
+            /\bfc2ppv[-_\s]*(\d{5,8})\b/i,
+            /\bfc\s*(\d{5,8})(?=[-_\s]?\d{1,3})?/i,
+            /\bfc2?[-_\s]*(\d{5,8})\b/i,
+            /\bFC2[\s_-]*PPV[\s_-]*(\d{5,8})\b/i,
+            /\bFC2PPV[\s_-]*(\d{5,8})\b/i,
+            /\bFC2[\s_-]+(\d{5,8})\b/i,
+            /\bFC2(\d{5,8})\b/i,
+            /\bPPV[\s_-]*(\d{5,8})\b/i,
+            /\bF[\s_-]*(\d{5,8})\b(?!\d)/i,
         ];
         for (const regex of patterns) {
             const m = str.match(regex);
@@ -601,6 +537,23 @@
             }
         }
         return null;
+    };
+
+    // 无码检测（扩展：支持东京热、一本道、加勒比等）
+    const checkUncensored = (fh, title) => {
+        // 关键词检测
+        if (/无码|無修正|uncensored/i.test(title)) return true;
+        // 番号模式检测
+        const uncensoredPatterns = [
+            /^Tokyo-Hot-/i, /^TOKYO-HOT-/i, /^1PONDO-/i, /^CARIB-/i,
+            /^HEYZO-/i, /^10MU-/i, /^MURA-/i, /^H4610-/i, /^NAMA-/i
+        ];
+        for (let pat of uncensoredPatterns) {
+            if (pat.test(fh)) return true;
+        }
+        // 后缀标记检测
+        const reg = new RegExp(fh.replace(/-/g, '[-_]?') + "[_-](UC|U)");
+        return reg.test(title.toUpperCase());
     };
 
     const removeCodeFromTitle = (str, baseCode) => {
@@ -631,7 +584,9 @@
         return str.replace(/\s+/g, ' ').trim();
     };
 
-    // ========== 下载站压缩番号识别 ==========
+    // ========================================================================
+    // 10. 压缩番号识别
+    // ========================================================================
     const normalizeExplicitCensoredCode = (prefix, digits) => {
         if (!prefix || !digits) return null;
         const p = String(prefix).toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -669,7 +624,9 @@
         return null;
     };
 
-    // ========== 分段信息提取（支持 SP/SPECIAL） ==========
+    // ========================================================================
+    // 11. 分段信息提取
+    // ========================================================================
     const extractPartInfoFromFileName = (fileName, code) => {
         if (!fileName) return '';
         const base = stripDomainPrefix(stripFileExt(fileName)).replace(/^h[_\-. ]*\d{2,5}[_\-. ]*/i, '');
@@ -698,12 +655,12 @@
         m = U.match(/(?:4K|8K|UHD|HD|FHD|1080P|720P)?[\s._\-]*(?:60|30)FPS0*([1-9]\d?)(?:$|[\s._\-])/);
         if (m) return numLabel(m[1]);
 
-        // 明确分段词（CD/DISC/PART/VOL/EP）
+        // 明确分段词
         const tailZone = U.slice(Math.max(0, U.length - 96));
         m = tailZone.match(/(?:^|[\s._\-\[\(【（])(?:CD|DISC|DISK|DVD|PART|PT|P|VOL|VOLUME|EP|EPISODE)[\s._\-]*0*([1-9]\d?)[\s._\-\]\)】）]*$/);
         if (m) return numLabel(m[1]);
 
-        // 新增 SP/SPECIAL
+        // SP/SPECIAL
         let spMatch = U.match(/(?:^|[\s._\-\[\(【（])(SP|SPECIAL)[\s._-]*(\d{1,3})?(?=$|[\s._\-\)】）])/i);
         if (spMatch) {
             if (spMatch[2]) return numLabel(spMatch[2]);
@@ -737,7 +694,9 @@
         return '';
     };
 
-    // ========== 手动命名保护 ==========
+    // ========================================================================
+    // 12. 手动命名保护
+    // ========================================================================
     const isRawDownloadSiteName = (fileName) => {
         const base = stripFileExt(String(fileName || '')).replace(/\s+/g, '').toLowerCase();
         if (!base) return false;
@@ -786,7 +745,9 @@
         return asciiWords.length >= 2 || asciiLen >= 10;
     };
 
-    // ========== 核心解析（含分段清理增强） ==========
+    // ========================================================================
+    // 13. 核心解析（全面增强）
+    // ========================================================================
     const parseVideoInfo = (origTitle, safeSuffix) => {
         try {
             if (!origTitle) return null;
@@ -821,63 +782,87 @@
             t = t.replace(/\b[01]+(?=[A-Z])/g, '').replace(/\b([A-Z])\s(?=[A-Z]\b)/g, '$1');
 
             let queryCode = null, displayCode = null, part = '';
+
+            // ---- 东京热特殊处理（无码） ----
             const thMatch = rawForCode.match(/Tokyo[\s_-]*Hot[\s_-]*[nN]?(\d{3,4})/i);
             if (thMatch) {
                 const num = thMatch[1].padStart(4, '0');
                 queryCode = `Tokyo-Hot-n${num}`;
                 displayCode = queryCode;
-            } else {
+                if (!markers.includes('无码')) markers.push('无码');
+            }
+            // ---- 一本道等无码系列 ----
+            else {
                 const fc2Code = extractFC2Code(rawForCode) || extractFC2Code(t);
                 if (fc2Code) {
                     queryCode = fc2Code;
                     displayCode = fc2Code;
                     const fc2Num = fc2Code.match(/\d+$/)[0];
-                    const rawForCode = rawForCode.replace(
-                        new RegExp(`(?:^|\\s)fc2?[\\s_-]*(?:ppv[\\s_-]*)?0*${fc2Num}(?:\\s|$)`, 'i'),
+                    rawForCode = rawForCode.replace(
+                        new RegExp(`(?:^|\\s)fc2?ppv?[\\s_-]*(?:ppv[\\s_-]*)?0*${fc2Num}(?:[-_\\s]?\\d{1,3})?`, 'i'),
                         ' '
                     ).trim();
                     const partMatch = rawForCode.match(/[-_](\d{1,3})(?:\s|$)/);
                     if (partMatch) {
-                        part = normalizePartToken(partMatch[1]);   // "001" → "1"
+                        part = normalizePartToken(partMatch[1]);
                         rawForCode = rawForCode.replace(partMatch[0], ' ').trim();
                     }
                 } else {
-                    const siteCode = extractSitePrefixedCodeFromName(origTitle);
-                    if (siteCode && siteCode.code) {
-                        queryCode = siteCode.code;
-                        displayCode = siteCode.code;
-                        if (siteCode.rawMatch) rawForCode = rawForCode.replace(new RegExp(escapeRegExp(siteCode.rawMatch), 'i'), ' ');
-                        rawForCode = rawForCode.replace(/^h[_\-. ]*/i, ' ').trim();
-                        const segM = rawForCode.match(/[_\-.](\d{1,3})\s*$/);
-                        if (segM && parseInt(segM[1], 10) >= 1 && parseInt(segM[1], 10) <= 999) {
-                            part = normalizePartToken(segM[1]);
-                            rawForCode = rawForCode.replace(new RegExp(`[_\\-.]${segM[1]}\\s*$`), ' ').trim();
-                        }
+                    // 识别其他无码格式：1PONDO, CARIB, HEYZO, 10MU等
+                    const uncensoredMatch = t.match(/\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA)[-_]?(\d+)/i);
+                    if (uncensoredMatch) {
+                        let prefix = uncensoredMatch[1].toUpperCase();
+                        let num = uncensoredMatch[2];
+                        if (prefix === 'CARIB') prefix = 'Caribbean';
+                        queryCode = prefix + '-' + num;
+                        displayCode = queryCode;
+                        if (!markers.includes('无码')) markers.push('无码');
+                        rawForCode = rawForCode.replace(new RegExp(uncensoredMatch[0], 'i'), ' ').trim();
                     } else {
-                        const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
-                        if (numM) {
-                            queryCode = `${numM[1]}-${numM[2]}`;
-                            const lowerRaw = rawForCode.toLowerCase();
-                            if (/1pon/i.test(lowerRaw)) displayCode = `1pondo-${numM[1]}-${numM[2]}`;
-                            else if (/carib/i.test(lowerRaw)) displayCode = `Caribbean-${numM[1]}-${numM[2]}`;
-                            else if (/paco/i.test(lowerRaw)) displayCode = `Pacopacomama-${numM[1]}-${numM[2]}`;
-                            else if (/heydouga/i.test(lowerRaw)) displayCode = `Heydouga-${numM[1]}-${numM[2]}`;
-                            else if (/tokyo/i.test(lowerRaw)) displayCode = `TokyoHot-${numM[1]}-${numM[2]}`;
-                            else { queryCode = `${numM[1]}-${numM[2]}`; displayCode = queryCode; }
+                        const siteCode = extractSitePrefixedCodeFromName(origTitle);
+                        if (siteCode && siteCode.code) {
+                            queryCode = siteCode.code;
+                            displayCode = siteCode.code;
+                            if (siteCode.rawMatch) rawForCode = rawForCode.replace(new RegExp(escapeRegExp(siteCode.rawMatch), 'i'), ' ');
+                            rawForCode = rawForCode.replace(/^h[_\-. ]*/i, ' ').trim();
+                            const segM = rawForCode.match(/[_\-.](\d{1,3})\s*$/);
+                            if (segM && parseInt(segM[1], 10) >= 1 && parseInt(segM[1], 10) <= 999) {
+                                part = normalizePartToken(segM[1]);
+                                rawForCode = rawForCode.replace(new RegExp(`[_\\-.]${segM[1]}\\s*$`), ' ').trim();
+                            }
                         } else {
-                            queryCode = matchCodeByPrefix(t);
-                            if (queryCode) displayCode = queryCode;
-                        }
-                        if (queryCode && !/^FC2-PPV/.test(queryCode)) {
-                            const codeForPattern = queryCode.replace(/-/g, '[-_\\s.]?');
-                            const rawMatch = rawForCode.match(new RegExp(`\\b${codeForPattern}(?![0-9])`, 'i'));
-                            if (rawMatch) rawForCode = rawForCode.replace(rawMatch[0], ' ');
+                            // 普通番号匹配
+                            const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
+                            if (numM) {
+                                queryCode = `${numM[1]}-${numM[2]}`;
+                                const lowerRaw = rawForCode.toLowerCase();
+                                if (/1pon/i.test(lowerRaw)) displayCode = `1pondo-${numM[1]}-${numM[2]}`;
+                                else if (/carib/i.test(lowerRaw)) displayCode = `Caribbean-${numM[1]}-${numM[2]}`;
+                                else if (/paco/i.test(lowerRaw)) displayCode = `Pacopacomama-${numM[1]}-${numM[2]}`;
+                                else if (/heydouga/i.test(lowerRaw)) displayCode = `Heydouga-${numM[1]}-${numM[2]}`;
+                                else if (/tokyo/i.test(lowerRaw)) displayCode = `TokyoHot-${numM[1]}-${numM[2]}`;
+                                else { queryCode = `${numM[1]}-${numM[2]}`; displayCode = queryCode; }
+                            } else {
+                                queryCode = matchCodeByPrefix(t);
+                                if (queryCode) displayCode = queryCode;
+                            }
+                            if (queryCode && !/^FC2-PPV/.test(queryCode)) {
+                                const codeForPattern = queryCode.replace(/-/g, '[-_\\s.]?');
+                                const rawMatch = rawForCode.match(new RegExp(`\\b${codeForPattern}(?![0-9])`, 'i'));
+                                if (rawMatch) rawForCode = rawForCode.replace(rawMatch[0], ' ');
+                            }
                         }
                     }
                 }
             }
+
             if (!queryCode) return null;
             const baseCode = displayCode || queryCode;
+
+            // 无码检测（追加）
+            if (checkUncensored(baseCode, raw)) {
+                if (!markers.includes('无码')) markers.push('无码');
+            }
 
             const safeB = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
             if (raw.indexOf("中文") !== -1 || new RegExp(safeB + "[_-](UC|C)\\b", "i").test(raw)) {
@@ -887,8 +872,8 @@
                 if (!markers.includes('无码')) markers.push('无码');
             }
 
-            if (/^FC2-PPV-\d{5,7}$/i.test(queryCode)) {
-                const partMatch = rawForCode.match(/^\s*[_\-](\d{1,3})\b/);
+            if (/^FC2-PPV-\d{5,8}$/i.test(queryCode) && !part) {
+                const partMatch = rawForCode.match(/[-_](\d{1,3})(?:\s|$)/);
                 if (partMatch) {
                     part = normalizePartToken(partMatch[1]);
                     rawForCode = rawForCode.replace(partMatch[0], ' ').trim();
@@ -916,12 +901,10 @@
                     rawForCode = rawForCode.replace(nm[0], ' ').trim();
                 }
             }
-            // 增强分段识别（包含 SP/SPECIAL）
             if (!part) {
                 const detectedPart = extractPartInfoFromFileName(origTitle, queryCode);
                 if (detectedPart) {
                     part = normalizePartToken(detectedPart);
-                    // 移除所有可能的分段标记（包括 SP/SPECIAL）
                     rawForCode = rawForCode
                         .replace(new RegExp(`(?:CD|DISC|DISK|DVD|PART|PT|P|VOL|VOLUME|EP|EPISODE|SP|SPECIAL)[\\s._-]*0*${escapeRegExp(detectedPart)}`, 'i'), ' ')
                         .replace(new RegExp(`(?:上|下|前|後|后)(?:集|部|篇|編|编|段)?(?=[\\s._\\-]|$)`, 'g'), ' ');
@@ -948,7 +931,9 @@
         }
     };
 
-    // ========== 构建新名称 ==========
+    // ========================================================================
+    // 14. 构建新名称
+    // ========================================================================
     const buildNewName = (vInfo, title, actresses, dateStr, suffix) => {
         let cleanTitle = removeCodeFromTitle(title, vInfo.baseCode);
         cleanTitle = cleanTitle.replace(/【[^】]*】/g, '').trim();
@@ -984,6 +969,9 @@
         return name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
     };
 
+    // ========================================================================
+    // 15. 发送改名请求
+    // ========================================================================
     let renameCompareList = [];
     const send_115 = (id, name, fh, origFilename, callback) => {
         const fn = name.replace(/[\\/:*?"<>|]/g, (c) => ({ '\\': '', '/': ' ', ':': ' ', '?': ' ', '"': ' ', '<': ' ', '>': ' ', '|': '' })[c] || '');
@@ -998,10 +986,14 @@
         }).fail(() => { showPageNotification(`${fh} 请求失败`, 'error', 3000); if (typeof callback === 'function') callback(); });
     };
 
-    // ========== DOMParser 辅助 ==========
+    // ========================================================================
+    // 16. DOMParser 辅助
+    // ========================================================================
     const parseHTML = (html) => new DOMParser().parseFromString(html, "text/html");
 
-    // ========== 多站刮削 ==========
+    // ========================================================================
+    // 17. 刮削函数
+    // ========================================================================
     const normDate = d => {
         if (!d) return '';
         const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
@@ -1024,10 +1016,11 @@
 
     const isNotFoundTitle = (t) => /404|not\s*found|page\s*not\s*found|no\s*result|找不到|页面不存在|查無|查无|無此|无此/i.test(String(t || ''));
 
+    // ---- javlibrary ----
     const fetchJavlib = (code, ok, fail) => {
         trySearchVariants(code, (q, nextVariant) => {
             GM_xmlhttpRequest({
-                method: "GET", url: javlibSearchBase + encodeURIComponent(q), anonymous: true,
+                method: "GET", url: javlibSearchBase + encodeURIComponent(q), anonymous: true, timeout: 15000,
                 onload: x => {
                     try {
                         if (x.status !== 200) return nextVariant();
@@ -1036,7 +1029,7 @@
                         if (!link) return nextVariant();
                         if (link.startsWith('/')) link = javlibBase.replace(/\/+$/, '') + link;
                         GM_xmlhttpRequest({
-                            method: "GET", url: link, anonymous: true,
+                            method: "GET", url: link, anonymous: true, timeout: 15000,
                             onload: xx => {
                                 try {
                                     if (xx.status !== 200) return nextVariant();
@@ -1061,13 +1054,14 @@
         }, tried => fail && fail("JavLibrary 搜索无结果: " + tried));
     };
 
+    // ---- javbus ----
     const fetchJavbus = (code, ok, fail) => {
         const variants = getCodeQueryVariants(code).filter(v => !/[\s_]/.test(v));
         let vi = 0;
         const tryOne = (q) => {
             const tryBase = (u, nextOnFail) => {
                 GM_xmlhttpRequest({
-                    method: "GET", url: u + q, anonymous: true,
+                    method: "GET", url: u + q, anonymous: true, timeout: 15000,
                     onload: x => {
                         try {
                             if (x.status !== 200) return nextOnFail();
@@ -1092,6 +1086,7 @@
                             const actresses = [];
                             doc.querySelectorAll("span.genre a[href*='/star/']").forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
                             const info = { title: ttl, date: isoDate, actresses };
+                            if (u.includes('uncensored')) info.uncensored = true;
                             storeInfo(code.toUpperCase(), info);
                             ok && ok(info);
                         } catch (e) { nextOnFail(); }
@@ -1108,6 +1103,7 @@
         nextVariant();
     };
 
+    // ---- xslist ----
     const fetchXslist = (code, ok, fail) => {
         const parsePage = (doc, cbOk, cbFail) => {
             const uc = code.toUpperCase().replace(/[-_\s]/g, '');
@@ -1131,7 +1127,7 @@
         };
         trySearchVariants(code, (q, nextVariant) => {
             GM_xmlhttpRequest({
-                method: "GET", url: xslistBase + "search?query=" + encodeURIComponent(q), anonymous: true,
+                method: "GET", url: xslistBase + "search?query=" + encodeURIComponent(q), anonymous: true, timeout: 15000,
                 onload: x => {
                     try {
                         if (x.status !== 200) return nextVariant();
@@ -1143,7 +1139,7 @@
                         if (!link) return nextVariant();
                         if (link.startsWith('/')) link = xslistBase.replace(/\/+$/, '') + link;
                         GM_xmlhttpRequest({
-                            method: "GET", url: link, anonymous: true,
+                            method: "GET", url: link, anonymous: true, timeout: 15000,
                             onload: dx => {
                                 try { parsePage(parseHTML(dx.responseText), ok, nextVariant); }
                                 catch (e) { nextVariant(); }
@@ -1156,10 +1152,11 @@
         }, tried => fail && fail("xslist 搜索无结果: " + tried));
     };
 
+    // ---- javdb ----
     const fetchJavdb = (code, ok, fail) => {
         trySearchVariants(code, (q, nextVariant) => {
             GM_xmlhttpRequest({
-                method: "GET", url: `${javdbSearchBase}${encodeURIComponent(q)}&f=all`, anonymous: true,
+                method: "GET", url: `${javdbSearchBase}${encodeURIComponent(q)}&f=all`, anonymous: true, timeout: 15000,
                 onload: x => {
                     try {
                         if (x.status !== 200) return nextVariant();
@@ -1168,7 +1165,7 @@
                         if (!link) return nextVariant();
                         if (link.startsWith('/')) link = javdbBase + link;
                         GM_xmlhttpRequest({
-                            method: "GET", url: link, anonymous: true,
+                            method: "GET", url: link, anonymous: true, timeout: 15000,
                             onload: dx => {
                                 try {
                                     if (dx.status !== 200) return nextVariant();
@@ -1182,10 +1179,18 @@
                                         if (/日期:|發行日期:|发行日期:/.test(t)) { dateText = t.replace(/.*?[:：]/, '').trim(); }
                                     });
                                     const isoDate = normDate(dateText);
-                                    const actresses = [];
-                                    ddoc.querySelectorAll('a[href*="/actors/"]').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
+                                    // 演员与性别
+                                    const actorEntries = [];
+                                    ddoc.querySelectorAll('a[href*="/actors/"]').forEach(a => {
+                                        const name = a.textContent.trim();
+                                        if (!name) return;
+                                        const gender = detectJavdbActorGender(a);
+                                        actorEntries.push({ name, gender });
+                                    });
+                                    // 兼容无性别标记时只保存名字
+                                    const actresses = actorEntries.map(e => e.name);
                                     if (!ttl) return nextVariant();
-                                    const info = { title: ttl, date: isoDate, actresses };
+                                    const info = { title: ttl, date: isoDate, actresses, actorEntries };
                                     storeInfo(code.toUpperCase(), info);
                                     ok && ok(info);
                                 } catch (e) { nextVariant(); }
@@ -1197,10 +1202,31 @@
         }, tried => fail && fail("JavDB 搜索无结果: " + tried));
     };
 
+    // JavDB 性别检测
+    const detectJavdbActorGender = (linkElement) => {
+        if (!linkElement) return 'unknown';
+        const link = $(linkElement);
+        const ownText = [link.text(), link.attr('data-gender'), link.attr('title'), link.attr('aria-label')].filter(Boolean).join(' ');
+        if (/♀|female|woman|女(?:優|优|演员|演員)?/i.test(ownText)) return 'female';
+        if (/♂|male|man|男(?:優|优|演员|演員)?/i.test(ownText)) return 'male';
+        let sibling = linkElement.nextSibling;
+        let checked = 0;
+        while (sibling && checked < 4) {
+            if (sibling.nodeType === 1 && String(sibling.tagName || '').toLowerCase() === 'a') break;
+            const text = String(sibling.textContent || '').trim();
+            if (/♀/.test(text)) return 'female';
+            if (/♂/.test(text)) return 'male';
+            sibling = sibling.nextSibling;
+            checked++;
+        }
+        return 'unknown';
+    };
+
+    // ---- fc2ppvdb ----
     const fetchFC2PPVDB = (code, ok, fail) => {
         const fc2Number = code.match(/\d+$/)[0];
         GM_xmlhttpRequest({
-            method: "GET", url: fc2ppvdbBase + fc2Number, timeout: 10000, anonymous: true,
+            method: "GET", url: fc2ppvdbBase + fc2Number, timeout: 15000, anonymous: true,
             onload: xhr => {
                 try {
                     if (xhr.status !== 200) return fail("FC2PPVDB HTTP " + xhr.status);
@@ -1223,6 +1249,7 @@
         });
     };
 
+    // ---- missav fc2 ----
     const signMissavSearchPath = (path, successCallback, failCallback) => {
         const databaseId = "missav-default";
         const publicToken = "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV";
@@ -1279,6 +1306,42 @@
         }, () => fail("MissAV 签名失败"));
     };
 
+    // ---- avsox（无码站） ----
+    const fetchAvsox = (code, ok, fail) => {
+        const base = "https://avsox.host/cn/search/";
+        const url = base + encodeURIComponent(code);
+        GM_xmlhttpRequest({
+            method: "GET", url, anonymous: true, timeout: 15000,
+            onload: xhr => {
+                try {
+                    if (xhr.status !== 200) return fail("avsox HTTP " + xhr.status);
+                    const doc = parseHTML(xhr.responseText);
+                    const item = doc.querySelector(".movie-box");
+                    if (!item) return fail("未找到影片");
+                    let titleEl = item.querySelector(".title") || item.querySelector(".name");
+                    if (!titleEl) return fail("无标题元素");
+                    let title = titleEl.textContent.trim();
+                    const dateEl = doc.querySelector(".date") || doc.querySelector(".info .date");
+                    let date = dateEl ? dateEl.textContent.trim() : '';
+                    const actresses = [];
+                    doc.querySelectorAll(".star a, .actress a").forEach(a => {
+                        const n = a.textContent.trim();
+                        if (n) actresses.push(n);
+                    });
+                    if (!title) return fail("无标题内容");
+                    const info = { title, date, actresses, uncensored: true };
+                    storeInfo(code.toUpperCase(), info);
+                    ok(info);
+                } catch (e) { fail(e.message); }
+            },
+            onerror: () => fail("请求失败"),
+            ontimeout: () => fail("超时")
+        });
+    };
+
+    // ========================================================================
+    // 18. 翻译
+    // ========================================================================
     const translateTitleToChinese = (title, enabled, fh, callback) => {
         let originalTitle = String(title || "").trim();
         if (!enabled || !originalTitle) { callback(originalTitle); return; }
@@ -1331,81 +1394,51 @@
         });
     };
 
-    // ========== 统一远程信息获取 ==========
-    const fetchRemoteInfo = (code, callback) => {
+    // ========================================================================
+    // 19. 远程信息获取（含并发优化）
+    // ========================================================================
+    const fetchRemoteInfo = (code, callback, isUncensored = false) => {
         const key = code.toUpperCase();
         if (isInfoCacheValid(key)) { callback(infoCache[key]); return; }
         if (isNegativeCached(key)) { callback(null); return; }
 
-        const enrichActors = (baseInfo, sources, done) => {
-            if (!sources.length || (baseInfo.actresses && baseInfo.actresses.length > 0)) {
-                done(baseInfo);
-                return;
-            }
-            const source = sources.shift();
-            source(code, fetched => {
-                if (fetched.actresses && fetched.actresses.length > 0) {
-                    baseInfo.actresses = fetched.actresses;
-                    done(baseInfo);
-                } else {
-                    enrichActors(baseInfo, sources, done);
-                }
-            }, () => {
-                enrichActors(baseInfo, sources, done);
-            });
+        const sources = isUncensored ? [fetchAvsox] : [fetchJavdb, fetchJavbus, fetchXslist];
+        let finished = false;
+        const done = (info) => {
+            if (finished) return;
+            finished = true;
+            if (info) { storeInfo(key, info); callback(info); }
+            else { markNegativeCached(key); callback(null); }
         };
 
-        const fetchChain = () => {
-            if (/^FC2-PPV-\d{5,7}$/i.test(code)) {
-                fetchJavdb(code, info => {
-                    storeInfo(key, info);
-                    callback(info);
-                }, () => {
-                    fetchMissavFC2(code, info => {
-                        storeInfo(key, info);
-                        callback(info);
-                    }, () => {
-                        fetchFC2PPVDB(code, info => {
-                            storeInfo(key, info);
-                            callback(info);
-                        }, () => {
-                            markNegativeCached(key);
-                            callback(null);
-                        });
-                    });
-                });
-            } else {
-                fetchJavdb(code, dbInfo => {
-                    enrichActors(dbInfo, [fetchJavbus, fetchXslist], enriched => {
-                        storeInfo(key, enriched);
-                        callback(enriched);
-                    });
-                }, () => {
-                    fetchJavbus(code, busInfo => {
-                        enrichActors(busInfo, [fetchXslist], enriched => {
-                            storeInfo(key, enriched);
-                            callback(enriched);
-                        });
-                    }, () => {
-                        fetchXslist(code, xsInfo => {
-                            storeInfo(key, xsInfo);
-                            callback(xsInfo);
-                        }, () => {
-                            markNegativeCached(key);
-                            callback(null);
-                        });
-                    });
-                });
-            }
-        };
-        fetchChain();
+        if (sources.length === 1) {
+            sources[0](code, done, done);
+            return;
+        }
+
+        let active = sources.length;
+        sources.forEach(source => {
+            source(code, info => { if (!finished) { finished = true; storeInfo(key, info); callback(info); } }, () => {
+                active--;
+                if (active === 0 && !finished) {
+                    finished = true;
+                    markNegativeCached(key);
+                    callback(null);
+                }
+            });
+        });
     };
 
-    // ========== 改名主流程 ==========
+    // ========================================================================
+    // 20. 改名主流程
+    // ========================================================================
     const getTargetName = (vInfo, suffix, addDate, translateChinese, callback) => {
         const code = vInfo.queryCode;
         const key = code.toUpperCase();
         const applyInfo = (info) => {
+            if (info.uncensored && !vInfo.markers.includes('无码')) {
+                vInfo.markers.push('无码');
+            }
             const finalize = (finalTitle) => {
                 const newName = buildNewName(vInfo, finalTitle, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ""), suffix);
                 callback(newName, true);
@@ -1419,10 +1452,12 @@
             }
         };
         if (isInfoCacheValid(key)) { applyInfo(infoCache[key]); return; }
+
+        const isUncensored = vInfo.markers && vInfo.markers.includes('无码');
         fetchRemoteInfo(code, (info) => {
             if (info) { storeInfo(key, info); applyInfo(info); }
             else callback(null, false);
-        });
+        }, isUncensored);
     };
 
     window.rename_multi = (fid, vInfo, suffix, addDate, callback, origFilename, translateChinese = false) => {
@@ -1451,7 +1486,9 @@
         send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     };
 
-    // ========== 批量处理（预览） ==========
+    // ========================================================================
+    // 21. 预览与批量处理
+    // ========================================================================
     const buildPreviewRows = (parsedItems, isLocal, addDate, translateChinese, done) => {
         const rows = [];
         if (isLocal) {
@@ -1652,7 +1689,9 @@
         }
     };
 
-    // ========== 备份与剪贴板 ==========
+    // ========================================================================
+    // 22. 备份与剪贴板
+    // ========================================================================
     function exportCompareToFile(list) {
         const text = list.map(item => `${item.original}\t${item.new}`).join('\n');
         const header = '【旧文件名】\t【新文件名】\n';
@@ -1689,13 +1728,16 @@
         } else { GM_setClipboard(text); showPageNotification('已复制到剪贴板', 'success', 3000); }
     }
 
-    // ========== 归档功能 ==========
+    // ========================================================================
+    // 23. 归档功能（含演员性别优先）
+    // ========================================================================
     const getSeriesFromCode = code => {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
         if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
         const m = c.match(/^([A-Z]+)-\d+/);
         return m ? m[1] : null;
     };
+
     const findOrCreateFolderAndMove = (fid, folderName, successCallback, failCallback) => {
         const cid = archiveRootCid || ROOT_DIR_CID;
         const cleanName = folderName.replace(/[\\/:*?"<>|]/g, ' ');
@@ -1720,6 +1762,7 @@
             }).fail(() => { showPageNotification('创建文件夹请求失败', 'error', 3000); if (typeof failCallback === 'function') failCallback('网络错误'); });
         }).fail(() => { showPageNotification('搜索文件夹请求失败', 'error', 3000); if (typeof failCallback === 'function') failCallback('网络错误'); });
     };
+
     const moveFileToFolder = (fid, targetCid, folderName, successCallback, failCallback) => {
         $.post("https://webapi.115.com/files/move", { pid: targetCid, fid: fid }, data => {
             const result = typeof data === 'string' ? JSON.parse(data) : data;
@@ -1767,13 +1810,30 @@
             let processed = 0, success = 0;
             const tasks = parsedItems.map(item => done => {
                 const code = item.vi.queryCode;
-                if (/^FC2-PPV-\d{5,7}$/i.test(code)) {
+                if (/^FC2-PPV-\d{5,8}$/i.test(code)) {
                     findOrCreateFolderAndMove(item.fid, "FC2", () => {
                         processed++; success++; progressBox.update(processed); done();
                     }, () => { processed++; progressBox.update(processed); done(); });
                 } else {
-                    const rawActress = actressCache[code.toUpperCase()]?.[0] || '';
-                    const folderName = (rawActress ? getStandardActressName(rawActress) : '') || getSeriesFromCode(code) || '其他';
+                    // 优先从 infoCache 获取带性别的演员列表
+                    let actorEntries = [];
+                    const key = code.toUpperCase();
+                    if (isInfoCacheValid(key) && infoCache[key].actorEntries) {
+                        actorEntries = infoCache[key].actorEntries;
+                    }
+                    // 否则从 actressCache 取纯名字
+                    let rawActress = actressCache[key]?.[0] || '';
+                    let folderName = '';
+                    if (actorEntries.length > 0) {
+                        // 选择优先女演员
+                        const preferred = actorEntries.find(e => e.gender === 'female') || actorEntries.find(e => e.gender === 'unknown') || actorEntries[0];
+                        folderName = preferred ? getStandardActressName(preferred.name) : '';
+                    } else if (rawActress) {
+                        folderName = getStandardActressName(rawActress);
+                    }
+                    if (!folderName) {
+                        folderName = getSeriesFromCode(code) || '其他';
+                    }
                     findOrCreateFolderAndMove(item.fid, folderName, () => {
                         processed++; success++; progressBox.update(processed); done();
                     }, () => { processed++; progressBox.update(processed); done(); });
@@ -1818,7 +1878,9 @@
         }
     };
 
-    // ========== 分桶归档 ==========
+    // ========================================================================
+    // 24. 分桶归档
+    // ========================================================================
     const getBucketFolderName = (code) => {
         const c = String(code).toUpperCase();
         if (/^FC2-PPV/.test(c)) return 'FC2';
@@ -1867,7 +1929,9 @@
         });
     };
 
-    // ========== JavDB 评分 ==========
+    // ========================================================================
+    // 25. JavDB 评分
+    // ========================================================================
     const getJavdbRating = () => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
         const cnt = $items.length;
@@ -1940,7 +2004,7 @@
 
     const fetchRatingForCode = (code, callback) => {
         GM_xmlhttpRequest({
-            method: "GET", url: `${javdbSearchBase}${encodeURIComponent(code)}&f=all`, timeout: 10000, anonymous: true,
+            method: "GET", url: `${javdbSearchBase}${encodeURIComponent(code)}&f=all`, timeout: 15000, anonymous: true,
             onload: xhr => {
                 if (xhr.status !== 200) { callback(null); return; }
                 try {
@@ -1962,7 +2026,7 @@
                             if (href) {
                                 const detailUrl = javdbBase + (href.startsWith('/') ? href : '/' + href);
                                 GM_xmlhttpRequest({
-                                    method: "GET", url: detailUrl, timeout: 10000, anonymous: true,
+                                    method: "GET", url: detailUrl, timeout: 15000, anonymous: true,
                                     onload: dx => {
                                         try {
                                             const dd = parseHTML(dx.responseText);
@@ -2006,7 +2070,9 @@
         }
     };
 
-    // ========== 菜单绑定 ==========
+    // ========================================================================
+    // 26. 菜单绑定与设置归档根
+    // ========================================================================
     function buttonInterval() {
         const $menu = $("div#js_float_content");
         if ($menu.length === 0) return;
@@ -2039,4 +2105,5 @@
         }
     }
 
+    console.log("115Rename2026 v2.2.1 已加载（完整版）");
 })();
