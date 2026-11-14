@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         2.3.0
-// @description     深度优化版：常量拆分｜并发控制｜模板函数｜完整功能（FC2变体、无码标记、性别优先、冷门番号）
+// @version         2.3.1
+// @description     深度优化版：修复@分隔番号丢失｜常量拆分｜并发控制｜模板函数｜完整功能（FC2变体、无码标记、性别优先、冷门番号）
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -294,10 +294,61 @@
         });
     };
 
-    /** 域名前缀剥离（@前部分） */
+    /**
+     * 智能剥除域名前缀/广告后缀
+     * 修复 SSIS-971.[4K]@RUNBKK 类番号丢失问题：
+     * 不再无脑取 @ 后面，而是智能判断哪一段包含番号，保留含番号的一段。
+     */
     const stripDomainPrefix = (filename) => {
-        const idx = filename.lastIndexOf('@');
-        return idx === -1 ? filename : filename.substring(idx + 1).trim();
+        if (!filename || !filename.includes('@')) return filename;
+
+        // 尝试识别安全扩展名（排除纯数字，如 .972 不应视为扩展名）
+        const safeExtMatch = filename.match(/\.([a-z0-9]{2,5})$/i);
+        const ext = (safeExtMatch && !/^\d+$/.test(safeExtMatch[1])) ? safeExtMatch[0] : '';
+        const base = ext ? filename.slice(0, -ext.length) : filename;
+
+        const parts = base.split('@').map(p => p.trim()).filter(p => p.length > 0);
+        if (parts.length <= 1) return filename;
+
+        // 判断是否像域名（带 TLD，但排除视频/图片扩展名）
+        const isDomain = (s) => {
+            if (!s) return false;
+            if (/\.(mp4|mkv|avi|wmv|mov|flv|rmvb|webm|ts|m4v|mpg|mpeg|jpg|jpeg|png|gif|webp|bmp|iso|wav|mp3|flac|aac|srt|ass|sub)$/i.test(s)) return false;
+            return /^(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\.[a-z]{2,})?$/i.test(s);
+        };
+
+        // 判断是否包含番号（覆盖多种格式）
+        const hasCode = (s) => {
+            if (!s) return false;
+            // 标准番号：ABC-123 / ABC_123 / ABC 123 / ABC123
+            if (/\b[A-Z]{2,8}[-_ ]?\d{2,5}\b/i.test(s)) return true;
+            // FC2 番号：FC2-PPV-1234567 / FC2PPV-1234567 / FC2-1234567 / fc1476760
+            if (/FC2[-_ ]?PPV[-_ ]?\d{5,8}/i.test(s)) return true;
+            if (/\bfc2?\d{5,8}/i.test(s)) return true;
+            // 纯数字-数字（如 123456-789）
+            if (/\b\d{4,6}[-_]\d{3,4}\b/.test(s)) return true;
+            // Tokyo-Hot 系列：Tokyo-Hot-n1234
+            if (/Tokyo[-_ ]?Hot[-_ ]?[nN]?\d{3,4}/i.test(s)) return true;
+            // 无码系列：1PONDO-xxx / HEYZO-xxxx / CARIB-xxx
+            if (/\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA|PACO|TOKYOHOT)[-_]?\d+/i.test(s)) return true;
+            return false;
+        };
+
+        // 策略1：从前往后找第一个"非域名且含番号"的段（番号通常在最前，广告在后）
+        for (let i = 0; i < parts.length; i++) {
+            if (isDomain(parts[i])) continue;
+            if (hasCode(parts[i])) {
+                return parts[i] + ext;
+            }
+        }
+
+        // 策略2：没有任何段含番号，若第一段是域名则取后面全部
+        if (isDomain(parts[0])) {
+            return parts.slice(1).join('@') + ext;
+        }
+
+        // 策略3：兜底保留最后一段（兼容无番号的广告文件）
+        return parts[parts.length - 1] + ext;
     };
 
     /** 获取安全后缀（扩展名） */
@@ -317,7 +368,7 @@
         return d;
     };
 
-    /** 判断是否为“未找到”标题 */
+    /** 判断是否为"未找到"标题 */
     const isNotFoundTitle = (t) => /404|not\s*found|page\s*not\s*found|no\s*result|找不到|页面不存在|查無|查无|無此|无此/i.test(String(t || ''));
 
     /** 将GM_xmlhttpRequest转为Promise */
@@ -383,7 +434,6 @@
     function buildPrefixList() {
         const prefixes = [...MANUAL_PREFIXES];
         const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        // 双字母
         for (let i = 0; i < 26; i++) {
             for (let j = 0; j < 26; j++) {
                 const p = letters[i] + letters[j];
@@ -392,7 +442,6 @@
                 }
             }
         }
-        // 单字母
         for (let i = 0; i < 26; i++) {
             const p = letters[i];
             if (!GARBAGE_WORDS.includes(p) && !prefixes.includes(p)) {
@@ -511,7 +560,6 @@
         const numLabel = n => { const v = parseInt(n, 10); return (v >= 1 && v <= 99) ? String(v) : ''; };
         const letterLabel = ch => { ch = String(ch || '').toUpperCase(); return /^[A-D]$/.test(ch) ? ch : ''; };
 
-        // 上/下/前/后
         const zhTail = base.match(/(?:^|[\s._\-\[\(【（])((?:上|下|前|後|后)(?:集|部|篇|編|编|段)?)(?:$|[\s._\-\]\)】）])/);
         if (zhTail) {
             const v = zhTail[1];
@@ -519,7 +567,6 @@
             if (/下|後|后/.test(v)) return '2';
         }
 
-        // 下载站后缀
         let m = U.match(/(?:^|[\s._\-])(?:HHB|HHC|HHD|HHH)0*([1-9]\d?)(?:$|[\s._\-])/);
         if (m) return numLabel(m[1]);
         m = U.match(/(?:4K|8K|HD|FHD|1080P|720P)[\s._\-]*S0*([1-9]\d?)(?:$|[\s._\-])/);
@@ -527,23 +574,19 @@
         m = U.match(/(?:4K|8K|UHD|HD|FHD|1080P|720P)?[\s._\-]*(?:60|30)FPS0*([1-9]\d?)(?:$|[\s._\-])/);
         if (m) return numLabel(m[1]);
 
-        // 明确分段词
         const tailZone = U.slice(Math.max(0, U.length - 96));
         m = tailZone.match(/(?:^|[\s._\-\[\(【（])(?:CD|DISC|DISK|DVD|PART|PT|P|VOL|VOLUME|EP|EPISODE)[\s._\-]*0*([1-9]\d?)[\s._\-\]\)】）]*$/);
         if (m) return numLabel(m[1]);
 
-        // SP/SPECIAL
         let spMatch = U.match(/(?:^|[\s._\-\[\(【（])(SP|SPECIAL)[\s._-]*(\d{1,3})?(?=$|[\s._\-\)】）])/i);
         if (spMatch) {
             if (spMatch[2]) return numLabel(spMatch[2]);
             else return 'SP';
         }
 
-        // 1of2
         m = tailZone.match(/(?:^|[\s._\-])0*([1-9]\d?)\s*(?:OF|\/|／|-)\s*0*([1-9]\d?)(?:$|[\s._\-])/);
         if (m && parseInt(m[2], 10) > 1) return numLabel(m[1]);
 
-        // 番号后紧贴分段
         if (code) {
             const codeStr = String(code).toUpperCase();
             const parts = codeStr.split('-');
@@ -605,7 +648,6 @@
 
             let queryCode = null, displayCode = null, part = '';
 
-            // 东京热
             const thMatch = rawForCode.match(/Tokyo[\s_-]*Hot[\s_-]*[nN]?(\d{3,4})/i);
             if (thMatch) {
                 const num = thMatch[1].padStart(4, '0');
@@ -628,7 +670,6 @@
                         rawForCode = rawForCode.replace(partMatch[0], ' ').trim();
                     }
                 } else {
-                    // 无码系列
                     const uncensoredMatch = t.match(/\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA)[-_]?(\d+)/i);
                     if (uncensoredMatch) {
                         let prefix = uncensoredMatch[1].toUpperCase();
@@ -639,7 +680,6 @@
                         if (!markers.includes('无码')) markers.push('无码');
                         rawForCode = rawForCode.replace(new RegExp(uncensoredMatch[0], 'i'), ' ').trim();
                     } else {
-                        // 常规番号
                         const numM = t.match(/\b(\d{4,6})[-_ ](\d{3,4})\b/);
                         if (numM) {
                             queryCode = `${numM[1]}-${numM[2]}`;
@@ -1180,7 +1220,6 @@
         if (isNegativeCached(key)) return Promise.reject(new Error('Negative cache'));
 
         const sources = [];
-        // FC2 特殊处理
         if (/^FC2-PPV-\d{5,8}$/i.test(code)) {
             sources.push(fetchJavdb, fetchMissavFC2, fetchFC2PPVDB);
             if (isUncensored) sources.push(fetchAvsox);
@@ -1192,7 +1231,6 @@
             }
         }
 
-        // 使用 Promise.race 并发，但需要每个请求都包装超时
         const promises = sources.map(fn => fn(code).then(info => {
             storeInfo(key, info);
             return info;
@@ -1219,7 +1257,7 @@
                 remaining--;
                 if (remaining === 0) checkDone();
             }));
-            setTimeout(checkDone, 30000); // 30秒总超时
+            setTimeout(checkDone, 30000);
         });
     };
 
@@ -1304,7 +1342,6 @@
         return buildNewName(vInfo, finalTitle, info.actresses, (addDate && info.date) ? info.date : (addDate ? vInfo.date : ''), suffix);
     };
 
-    // 对外接口
     window.rename_multi = (fid, vInfo, suffix, addDate, callback, origFilename, translateChinese = false) => {
         getTargetName(vInfo, suffix, addDate, translateChinese).then(newName => {
             if (newName) {
@@ -1486,7 +1523,6 @@
             updateSummary();
         };
 
-        // 事件委托方式
         body.addEventListener('change', (e) => {
             if (e.target.classList.contains('rp-chk')) updateSummary();
         });
@@ -2134,5 +2170,5 @@
         }
     }
 
-    console.log('115Rename2026 v2.3.0 深度优化版加载完成');
+    console.log('115Rename2026 v2.3.1 已加载（修复@分隔番号丢失问题）');
 })();
