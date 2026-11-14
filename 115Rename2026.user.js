@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         3.2.0
-// @description     115 新版适配｜字段顺序自定义｜FC2 分段修复｜多源检索｜分辨率清理｜无码/破解识别增强
+// @version         3.3.0
+// @description     115 新版适配｜字段顺序自定义｜多源检索｜分辨率清理｜无码/破解识别｜暗黑模式支持
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -42,7 +42,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.2.0';
+    const SCRIPT_VERSION = '3.3.0';
 
     // ============================================================
     // 默认设置
@@ -94,7 +94,7 @@
     function saveSettings(p) { loadSettings(); if (p) Object.assign(SETTINGS, p); GM_setValue('rename2026_settings', JSON.stringify(SETTINGS)); }
 
     // ============================================================
-    // 常量（v3.2.0 重点修改）
+    // 常量（v3.2.0 增强）
     // ============================================================
     const ACTRESS_ALIAS_MAP_DEFAULT = {
         '三上悠亜': '三上悠亚', 'Mikami Yua': '三上悠亚', '深田えいみ': '深田咏美', 'Fukada Eimi': '深田咏美',
@@ -173,16 +173,13 @@
         'WATERMARK', 'RARBG', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX', 'BDRIP', 'HDRIP', 'WEBDL'
     ];
 
-    // ★ 分辨率/帧率清理（不含 4K/8K，它们在 MARKER_MAP 中单独处理）
+    // 分辨率/帧率清理（不含 4K/8K，它们在 MARKER_MAP 中单独处理）
     const RESOLUTION_FPS_PATTERN = /(?<![A-Za-z0-9])(?:2160[Pp]|1440[Pp]|1080[PpIi]?|720[PpIi]?|576[Pp]|540[Pp]|480[Pp]|396[Pp]|360[Pp]|240[Pp]|FHD|FULLHD|UHD|QHD|WQHD|HDR10\+?|HDR|10[Bb][Ii][Tt]|8[Bb][Ii][Tt]|(?:24|25|30|50|60|120|144)\s*[Ff][Pp][Ss]|[Ff][Pp][Ss])(?![A-Za-z0-9])/gi;
 
-    // ★ 标记识别（v3.2.0 增强：无码/破解更全面）
+    // 标记识别（增强无码/破解）
     const MARKER_MAP = {
-        // === 组合优先（破解/流出的复合表述） ===
         '无码破解': '破解', '破解无码': '破解',
         '无码流出': '流出', '流出无码': '流出',
-
-        // === 无码（无修正相关） ===
         '无修正': '无码', '無修正': '无码',
         '无码': '无码', '無碼': '无码',
         '无马赛克': '无码', '無馬賽克': '无码',
@@ -190,67 +187,43 @@
         'uncensored': '无码', 'uncensor': '无码',
         'decensored': '无码', 'decensor': '无码',
         'restored': '无码', 'restoration': '无码',
-
-        // === 流出 ===
         '流出': '流出',
         'leaked': '流出', 'leaks': '流出', 'leak': '流出',
-
-        // === 破解 ===
         '破解版': '破解', '破解': '破解',
         '破壊版': '破解', '破壊': '破解',
         'hacked': '破解', 'hack': '破解',
         'cracked': '破解', 'crack': '破解',
         'pierce': '破解',
-
-        // === 中文字幕 ===
         '中文字幕版': '中文字幕', '中文字幕': '中文字幕',
         '中字版': '中文字幕',
         '繁体中文': '中文字幕', '简体中文': '中文字幕',
         '繁體中文': '中文字幕', '簡體中文': '中文字幕',
         '繁體中文字幕': '中文字幕', '簡體中文字幕': '中文字幕',
-        'chinese': '中文字幕',
-        'big5': '中文字幕',
+        'chinese': '中文字幕', 'big5': '中文字幕',
         'chs': '中文字幕', 'cht': '中文字幕', 'gb': '中文字幕',
-
-        // === 超高分辨率（保留） ===
-        '4k': '4K', '8k': '8K',
-        '2160p': '4K',
-
-        // === VR / 3D ===
-        'vr180': 'VR', 'vr360': 'VR', 'vr': 'VR',
-        '3d': '3D',
+        '4k': '4K', '8k': '8K', '2160p': '4K',
+        'vr180': 'VR', 'vr360': 'VR', 'vr': 'VR', '3d': '3D',
     };
-
-    // 动态构建 MARKER_PATTERN（长 key 优先匹配）
     const MARKER_PATTERN = (function () {
-        const keys = Object.keys(MARKER_MAP).sort(function (a, b) { return b.length - a.length; });
-        const escaped = keys.map(function (k) { return k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+        const keys = Object.keys(MARKER_MAP).sort((a, b) => b.length - a.length);
+        const escaped = keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
         return new RegExp('(?:' + escaped.join('|') + ')', 'gi');
     })();
-
     const AD_BADGES = /\[3Q\]|\(原\)|\[原\]|\[BT\]|【广告】|\[廣告\]/gi;
 
     // ============================================================
-    // 工具函数
+    // 工具函数（全原生）
     // ============================================================
-    const stripFileExt = function (n) { const s = String(n || ''); const i = s.lastIndexOf('.'); return i > 0 ? s.slice(0, i) : s; };
-    const escapeRegExp = function (s) { return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
-    const sanitizeFileName = function (s) { if (s == null) return ''; return String(s).replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim(); };
-    const isPunctOnly = function (s) {
-        if (s == null) return true;
-        const t = String(s).trim();
-        if (!t) return true;
-        return t.replace(/[^a-zA-Z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, '') === '';
-    };
-    const normalizePartToken = function (p) {
-        const s = String(p == null ? '' : p);
-        if (/^\d+$/.test(s)) { const v = parseInt(s, 10); if (v >= 1 && v <= 999) return String(v); }
-        return s;
-    };
-    const normalize115Name = function (n) {
+    const stripFileExt = n => { const s = String(n || ''); const i = s.lastIndexOf('.'); return i > 0 ? s.slice(0, i) : s; };
+    const escapeRegExp = s => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const sanitizeFileName = s => s == null ? '' : String(s).replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+    const isPunctOnly = s => !s || !String(s).trim() || /^[\s\.\-_·・,，。;；:：!！?？、\/\\|+~@#$%^&*()\[\]{}【】「」『』《》<>]+$/.test(String(s).trim());
+    const normalizePartToken = p => { const s = String(p == null ? '' : p); if (/^\d+$/.test(s)) { const v = parseInt(s, 10); if (v >= 1 && v <= 999) return String(v); } return s; };
+
+    const normalize115Name = n => {
         if (!n) return '';
         let s = String(n);
-        try { s = s.normalize('NFKC'); } catch (e) { }
+        try { s = s.normalize('NFKC'); } catch (_) { }
         s = s.replace(/[\u200B-\u200D\uFEFF\u00AD\u2060-\u2064\u180E\u2028\u2029]/g, '');
         s = s.replace(/[\u2018\u2019\u2032]/g, "'").replace(/[\u201C\u201D\u2033]/g, '"');
         s = s.replace(/[\u2010-\u2015\u2212\u30FC]+/g, '-');
@@ -259,12 +232,13 @@
         s = s.replace(/[\\\/:?"<>|*]/g, ' ');
         return s.replace(/\s+/g, ' ').trim();
     };
-    const normalizeFolderName = function (n) {
+
+    const normalizeFolderName = n => {
         if (!n) return '';
         let s = normalize115Name(String(n));
-        s = s.replace(/[\uFF21-\uFF3A]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
-        s = s.replace(/[\uFF41-\uFF5A]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
-        s = s.replace(/[\uFF10-\uFF19]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+        s = s.replace(/[\uFF21-\uFF3A]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+        s = s.replace(/[\uFF41-\uFF5A]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+        s = s.replace(/[\uFF10-\uFF19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
         s = s.replace(/\uFF0C/g, ',').replace(/\u3001/g, ',');
         s = s.replace(/\uFF0E/g, '.').replace(/\u3002/g, '.');
         s = s.replace(/\uFF08/g, '(').replace(/\uFF09/g, ')');
@@ -272,80 +246,67 @@
         s = s.replace(/\u2014/g, '-').replace(/\u2013/g, '-');
         return s.replace(/\s+/g, ' ').trim();
     };
-    const folderNameKey = function (n) {
-        if (!n) return '';
-        return normalize115Name(n).toLowerCase().replace(/[\s\-_·・.,，。()（）\[\]【】「」『』]+/g, '').replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]/g, '');
+
+    const folderNameKey = n => !n ? '' : normalize115Name(n).toLowerCase().replace(/[\s\-_·・.,，。()（）\[\]【】「」『』]+/g, '').replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]/g, '');
+
+    const getCodeQueryVariants = code => {
+        const variants = [String(code || '')];
+        const noDash = String(code || '').replace(/-/g, '');
+        if (noDash !== code) variants.push(noDash);
+        const m = String(code || '').match(/^([A-Z]+)-(\d+)$/);
+        if (m) {
+            const num = String(parseInt(m[2], 10));
+            if (num !== m[2]) variants.push(m[1] + '-' + num);
+            variants.push(m[1] + num, m[1] + ' ' + num, m[1] + '_' + num);
+        }
+        return Array.from(new Set(variants));
     };
-    const getActressAliasMap = function () {
+
+    const getActressAliasMap = () => {
         const s = loadSettings();
         if (!s.actressAlias) return Object.assign({}, ACTRESS_ALIAS_MAP_DEFAULT);
         try { return Object.assign({}, ACTRESS_ALIAS_MAP_DEFAULT, JSON.parse(s.actressAlias)); } catch (e) { return Object.assign({}, ACTRESS_ALIAS_MAP_DEFAULT); }
     };
-    const getCodeQueryVariants = function (code) {
-        const v = [String(code || '')];
-        const noDash = String(code || '').replace(/-/g, '');
-        if (noDash !== code) v.push(noDash);
-        const m = String(code || '').match(/^([A-Z]+)-(\d+)$/);
-        if (m) {
-            const num = String(parseInt(m[2], 10));
-            if (num !== m[2]) v.push(m[1] + '-' + num);
-            v.push(m[1] + num, m[1] + ' ' + num, m[1] + '_' + num);
-        }
-        return Array.from(new Set(v));
-    };
-    const getStandardActressName = function (name) {
+
+    const getStandardActressName = name => {
         if (!name) return name;
         const n = normalizeFolderName(String(name));
         if (!n) return n;
         const map = getActressAliasMap();
         return map[n] || n;
     };
-    const isPlausibleActressToken = function (name) {
+
+    const isPlausibleActressToken = name => {
         if (!name) return false;
-        let n = normalizeFolderName(String(name));
-        n = n.replace(/[\[\]【】()（）{}<>《》「」『』]/g, '').trim();
+        let n = normalizeFolderName(String(name)).replace(/[\[\]【】()（）{}<>《》「」『』]/g, '').trim();
         if (!n) return false;
         const key = folderNameKey(n);
         if (key.length < 2 || key.length > 24) return false;
         if (/^(有码|有碼|无码|無碼|欧美|歐美|动漫|動漫|系列|片商|演員|演员|女优|女優|中文字幕|字幕|高清|無修正|无修正|合集|整理|未整理|已整理)$/.test(n)) return false;
+        if (/^(女优归档|女優归档|女優歸檔|女优歸檔)[-_]?\d*$/i.test(n)) return false;
+        if (/^(番号归档|番號归档|番号歸檔|番號歸檔)(?:[-_][A-Z0-9]+)?$/i.test(n)) return false;
         if (/[!！?？~〜～]/.test(n)) return false;
         if (/(AV女優|AV女优|新人AV|新人|中出し|中出|生中出|無修正|无码|高清|中文字幕|素人|人妻|限定|企画|シリーズ|NTR)/i.test(n)) return false;
         return true;
     };
 
-    // ★ v3.2.0：中文标记不做边界检查，英文标记前后都字母才跳过
-    const removeMarkers = function (str) {
-        return String(str).replace(MARKER_PATTERN, function (m, p1, offset, full) {
-            if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(m)) return ' ';
-            const prev = offset > 0 ? full[offset - 1] : '';
-            const next = offset + m.length < full.length ? full[offset + m.length] : '';
-            if (/[a-z0-9]/i.test(prev) && /[a-z0-9]/i.test(next)) return m;
-            return ' ';
-        });
-    };
+    const removeMarkers = str => String(str).replace(MARKER_PATTERN, (m, p1, offset, full) => {
+        if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(m)) return ' ';
+        const prev = offset > 0 ? full[offset - 1] : '';
+        const next = offset + m.length < full.length ? full[offset + m.length] : '';
+        if (/[a-z0-9]/i.test(prev) && /[a-z0-9]/i.test(next)) return m;
+        return ' ';
+    });
 
-    const stripDomainPrefix = function (filename) {
+    const stripDomainPrefix = filename => {
         if (!filename || filename.indexOf('@') === -1) return filename;
         const safeExtMatch = filename.match(/\.([a-z0-9]{2,5})$/i);
         const ext = (safeExtMatch && !/^\d+$/.test(safeExtMatch[1])) ? safeExtMatch[0] : '';
         const base = ext ? filename.slice(0, -ext.length) : filename;
-        const parts = base.split('@').map(function (p) { return p.trim(); }).filter(function (p) { return p.length > 0; });
+        const parts = base.split('@').map(p => p.trim()).filter(p => p.length > 0);
         if (parts.length <= 1) return filename;
-        const isDomain = function (s) {
-            if (!s) return false;
-            if (/\.(mp4|mkv|avi|wmv|mov|flv|rmvb|webm|ts|m4v|mpg|mpeg|jpg|jpeg|png|gif|webp|bmp|iso|wav|mp3|flac|aac|srt|ass|sub)$/i.test(s)) return false;
-            return /^(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\.[a-z]{2,})?$/i.test(s);
-        };
-        const hasCode = function (s) {
-            if (!s) return false;
-            if (/\b[A-Z]{2,8}[-_ ]?\d{2,5}\b/i.test(s)) return true;
-            if (/FC2[-_ ]?PPV[-_ ]?\d{5,8}/i.test(s)) return true;
-            if (/\bfc2?\d{5,8}/i.test(s)) return true;
-            if (/\b\d{4,6}[-_]\d{3,4}\b/.test(s)) return true;
-            if (/Tokyo[-_ ]?Hot[-_ ]?[nN]?\d{3,4}/i.test(s)) return true;
-            if (/\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA|PACO|TOKYOHOT)[-_]?\d+/i.test(s)) return true;
-            return false;
-        };
+        const isDomain = s => !s ? false : (!/\.(mp4|mkv|avi|wmv|mov|flv|rmvb|webm|ts|m4v|mpg|mpeg|jpg|jpeg|png|gif|webp|bmp|iso|wav|mp3|flac|aac|srt|ass|sub)$/i.test(s) && /^(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\.[a-z]{2,})?$/i.test(s));
+        const hasCode = s => !s ? false : (/\b[A-Z]{2,8}[-_ ]?\d{2,5}\b/i.test(s) || /FC2[-_ ]?PPV[-_ ]?\d{5,8}/i.test(s) || /\bfc2?\d{5,8}/i.test(s) || /\b\d{4,6}[-_]\d{3,4}\b/.test(s) || /Tokyo[-_ ]?Hot[-_ ]?[nN]?\d{3,4}/i.test(s) || /\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA|PACO|TOKYOHOT)[-_]?\d+/i.test(s));
         for (let i = 0; i < parts.length; i++) {
             if (isDomain(parts[i])) continue;
             if (hasCode(parts[i])) return parts[i] + ext;
@@ -353,8 +314,10 @@
         if (isDomain(parts[0])) return parts.slice(1).join('@') + ext;
         return parts[parts.length - 1] + ext;
     };
-    const getSafeSuffix = function (filename) { const m = filename.match(/\.([a-z0-9]{2,5})$/i); if (m && !/^\d+$/.test(m[1])) return m[0]; return ''; };
-    const normDate = function (d) {
+
+    const getSafeSuffix = filename => { const m = filename.match(/\.([a-z0-9]{2,5})$/i); return (m && !/^\d+$/.test(m[1])) ? m[0] : ''; };
+
+    const normDate = d => {
         if (!d) return '';
         const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
         if (m) return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
@@ -362,26 +325,23 @@
         if (m2) return m2[3] + '-' + m2[2] + '-' + m2[1];
         return d;
     };
-    const isNotFoundTitle = function (t) { return /404|not\s*found|page\s*not\s*found|no\s*result|找不到|页面不存在|查無|查无|無此|无此/i.test(String(t || '')); };
-    const gmRequest = function (opts) {
-        return new Promise(function (resolve, reject) {
-            const timer = setTimeout(function () { reject(new Error('Timeout')); }, opts.timeout || 15000);
-            GM_xmlhttpRequest(Object.assign({}, opts, {
-                onload: function (r) { clearTimeout(timer); resolve(r); },
-                onerror: function (e) { clearTimeout(timer); reject(e); },
-                ontimeout: function () { clearTimeout(timer); reject(new Error('Timeout')); }
-            }));
-        });
-    };
-    const parseHTML = function (html) { return new DOMParser().parseFromString(html, 'text/html'); };
-    const escapeHtml = function (s) {
-        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-        });
-    };
+
+    const isNotFoundTitle = t => /404|not\s*found|page\s*not\s*found|no\s*result|找不到|页面不存在|查無|查无|無此|无此/i.test(String(t || ''));
+
+    const gmRequest = opts => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Timeout')), opts.timeout || 15000);
+        GM_xmlhttpRequest(Object.assign({}, opts, {
+            onload: r => { clearTimeout(timer); resolve(r); },
+            onerror: e => { clearTimeout(timer); reject(e); },
+            ontimeout: () => { clearTimeout(timer); reject(new Error('Timeout')); }
+        }));
+    });
+
+    const parseHTML = html => new DOMParser().parseFromString(html, 'text/html');
+    const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
     // ============================================================
-    // 新版 115 适配：选择器（同 v3.1.1）
+    // 新版 115 适配选择器（全原生）
     // ============================================================
     const V115_ROW_SELECTORS = ['li[rel="item"]', '.file-list-item', '.file-grid-item', '[data-file-id]'];
     const V115_ID_ATTRS_FOLDER = ['data-file-id', 'cate_id', 'cid', 'file_id', 'data-cate-id', 'data-cid'];
@@ -396,6 +356,7 @@
         }
         return '';
     }
+
     function v115IsFolderRow(row) {
         const ft = row.getAttribute('file_type');
         if (ft === '0') return true;
@@ -410,6 +371,7 @@
         }
         return false;
     }
+
     function v115GetRowName(row) {
         if (!row) return '';
         const direct = row.getAttribute('title') || row.getAttribute('data-title') || row.getAttribute('data-name');
@@ -423,6 +385,7 @@
         }
         return '';
     }
+
     function v115GetRowId(row, isFolder) {
         const attrs = isFolder ? V115_ID_ATTRS_FOLDER : V115_ID_ATTRS_FILE;
         let id = v115GetAttr(row, attrs);
@@ -436,6 +399,7 @@
         if (pk) return String(pk).trim();
         return '';
     }
+
     function v115IsRowSelected(row) {
         if (!row) return false;
         try { if (typeof row.matches === 'function' && row.matches('li.selected, .selected, .is-selected, [aria-selected="true"]')) return true; } catch (e) { }
@@ -444,22 +408,24 @@
         if (cb && cb.checked) return true;
         return false;
     }
+
     function get115SelectedItems() {
         const results = [];
         const seen = new Set();
         const docs = [document];
         try {
-            document.querySelectorAll('iframe[rel="wangpan"], iframe[src*="115.com"], iframe[src*="/web/"]').forEach(function (f) {
+            document.querySelectorAll('iframe[rel="wangpan"], iframe[src*="115.com"], iframe[src*="/web/"]').forEach(f => {
                 try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) { }
             });
         } catch (e) { }
+
         for (let d = 0; d < docs.length; d++) {
             const doc = docs[d];
             const allRows = new Set();
-            V115_ROW_SELECTORS.forEach(function (sel) {
-                try { doc.querySelectorAll(sel).forEach(function (el) { allRows.add(el); }); } catch (e) { }
+            V115_ROW_SELECTORS.forEach(sel => {
+                try { doc.querySelectorAll(sel).forEach(el => { allRows.add(el); }); } catch (e) { }
             });
-            allRows.forEach(function (row) {
+            allRows.forEach(row => {
                 if (seen.has(row)) return;
                 if (!v115IsRowSelected(row)) return;
                 let p = row.parentElement;
@@ -470,17 +436,28 @@
                 const isFolder = v115IsFolderRow(row);
                 const fid = v115GetRowId(row, isFolder);
                 const fn = v115GetRowName(row);
-                if (fid && fn) results.push({ fid: fid, fn: fn, isFolder: isFolder, row: row });
+                if (fid && fn) results.push({ fid, fn, isFolder, row });
             });
         }
         return results;
     }
 
     // ============================================================
-    // 菜单（同 v3.1.1，样式已统一）
+    // 菜单（全原生 + 样式完美对齐 + 暗黑模式）
     // ============================================================
     const MENU_MODERN_ANCHOR_SEL = 'button[data-menu-action="move"], button[data-menu-action="open"], button[data-menu-action="rename"], button[data-menu-action="copy"]';
     const MENU_LEGACY_ANCHOR_SEL = "li[val='open_dir'], li[data-val='open_dir'], li[menu='open_dir']";
+
+    const MODERN_MENU_ICONS = {
+        local_code_process: 'M4 2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v12h12V4H4zm2 2h2v2H6V6zm0 4h2v2H6v-2zm4-4h4v2h-4V6zm0 4h4v2h-4v-2z',
+        rename_all_multi_date: 'M15 2v2h-2v12h2v2H9v-2h2V4H9V2zm1 3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v-2h2V7h-2V5zm-6 0v2H4v6h6v2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 4v2H5V9z',
+        rename_all_multi_zh: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM9 5h2v2.2A6 6 0 0 1 14.8 11H13v2h-2v2H9v-2H5.2A6 6 0 0 1 11 7.2V5zm0 4.3A4 4 0 0 0 7.3 11H9V9.3zm2 0V11h1.7A4 4 0 0 0 11 9.3z',
+        archive_to_folder: 'M3 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3zm2 1v1h3V4H5zm7-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1V3zm2 1v1h1V4h-1zM3 13a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3zm2 1v1h3v-1H5zm7-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-3zm2 1v1h1v-1h-1z',
+        archive_to_bucket: 'M2 4a2 2 0 0 1 2-2h3v2H4v3H2V4zm14-2a2 2 0 0 1 2 2v3h-2V4h-3V2h3zm2 14a2 2 0 0 1-2 2h-3v-2h3v-3h2v3zm-16 0V13h2v3h3v2H4a2 2 0 0 1-2-2zM7 7h6v2H7V7zm0 4h6v2H7v-2z',
+        set_archive_root: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+        get_javdb_rating: 'm10 2.5 2.163 4.383 4.837.703-3.5 3.412.826 4.816L10 13.538l-4.326 2.276.826-4.816L3 7.586l4.837-.703L10 2.5zm0 4.106-1.175 2.38-2.627.382 1.901 1.853-.449 2.617L10 12.604l2.35 1.234-.449-2.617 1.901-1.853-2.627-.382L10 6.606z',
+        backup_file_names: 'M13 5.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h9zm0 2H4v8h9v-8zm3-5a2 2 0 0 1 2 2v9h-2v-9H6v-2h10z',
+    };
 
     function findMenuAnchor() {
         try {
@@ -493,6 +470,7 @@
         } catch (e) { }
         return null;
     }
+
     function handleMenuAction(actionId) {
         if (actionId === 'local_code_process') rename(local_rename);
         else if (actionId === 'rename_all_multi_date') { saveSettings({ translateChinese: false }); rename(rename_multi); }
@@ -503,61 +481,65 @@
         else if (actionId === 'get_javdb_rating') getJavdbRating();
         else if (actionId === 'backup_file_names') backupFileNames();
     }
-    const MODERN_MENU_ICONS = {
-        local_code_process: 'M4 2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v12h12V4H4zm2 2h2v2H6V6zm0 4h2v2H6v-2zm4-4h4v2h-4V6zm0 4h4v2h-4v-2z',
-        rename_all_multi_date: 'M15 2v2h-2v12h2v2H9v-2h2V4H9V2zm1 3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v-2h2V7h-2V5zm-6 0v2H4v6h6v2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 4v2H5V9z',
-        rename_all_multi_zh: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM9 5h2v2.2A6 6 0 0 1 14.8 11H13v2h-2v2H9v-2H5.2A6 6 0 0 1 11 7.2V5zm0 4.3A4 4 0 0 0 7.3 11H9V9.3zm2 0V11h1.7A4 4 0 0 0 11 9.3z',
-        archive_to_folder: 'M3 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3zm2 1v1h3V4H5zm7-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1V3zm2 1v1h1V4h-1zM3 13a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3zm2 1v1h3v-1H5zm7-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-3zm2 1v1h1v-1h-1z',
-        archive_to_bucket: 'M2 4a2 2 0 0 1 2-2h3v2H4v3H2V4zm14-2a2 2 0 0 1 2 2v3h-2V4h-3V2h3zm2 14a2 2 0 0 1-2 2h-3v-2h3v-3h2v3zm-16 0V13h2v3h3v2H4a2 2 0 0 1-2-2zM7 7h6v2H7V7zm0 4h6v2H7v-2z',
-        set_archive_root: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
-        get_javdb_rating: 'm10 2.5 2.163 4.383 4.837.703-3.5 3.412.826 4.816L10 13.538l-4.326 2.276.826-4.816L3 7.586l4.837-.703L10 2.5zm0 4.106-1.175 2.38-2.627.382 1.901 1.853-.449 2.617L10 12.604l2.35 1.234-.449-2.617 1.901-1.853-2.627-.382L10 6.606z',
-        backup_file_names: 'M13 5.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h9zm0 2H4v8h9v-8zm3-5a2 2 0 0 1 2 2v9h-2v-9H6v-2h10z',
-    };
+
     function injectMenu() {
         if (document.getElementById('rename_list') || document.getElementById('rename_list_modern')) return true;
         const info = findMenuAnchor();
         if (!info) return false;
         const s = loadSettings();
-        const visible = MENU_ITEMS.filter(function (it) { return s.menuVisibility[it.key] !== false; });
+        const visible = MENU_ITEMS.filter(it => s.menuVisibility[it.key] !== false);
         if (!visible.length) return true;
+
         if (info.type === 'modern') {
             const wrap = document.createElement('div');
             wrap.id = 'rename_list_modern';
             wrap.style.cssText = 'display: contents;';
-            const baseClass = info.anchor.className || '';
-            visible.forEach(function (it) {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.classList.contains('dark') || document.body.classList.contains('dark');
+            const textColor = isDark ? '#e5e7eb' : '#1f2937';
+            const hoverBg = isDark ? 'rgba(255,255,255,0.08)' : '#F7F9FA';
+
+            visible.forEach(it => {
                 const btn = document.createElement('button');
                 btn.type = 'button';
-                btn.className = baseClass;
+                btn.className = 'w-full text-left flex items-center whitespace-nowrap cursor-pointer transition-colors';
+                btn.style.cssText = `height: 32px; padding: 0 12px; gap: 12px; font-size: 12px; font-weight: 500; color: ${textColor}; background: transparent; border: none; outline: none;`;
                 btn.dataset.renameAction = it.id;
+
+                btn.addEventListener('mouseenter', () => { btn.style.background = hoverBg; });
+                btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+
                 const iconPath = MODERN_MENU_ICONS[it.id];
+                const iconColor = 'var(--dark-only-file-menu-icon, ' + (isDark ? '#9ca3af' : '#4a5568') + ')';
                 const svg = iconPath
-                    ? '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" class="" style="flex-shrink:0;"><g fill="none" fill-rule="evenodd"><path d="M0 0h20v20H0z"></path><path fill="var(--dark-only-file-menu-icon, #4a5568)" fill-rule="nonzero" d="' + iconPath + '"></path></g></svg>'
-                    : '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" class="" style="flex-shrink:0;"><g fill="none" fill-rule="evenodd"><path d="M0 0h20v20H0z"></path><circle cx="10" cy="10" r="2.5" fill="var(--dark-only-file-menu-icon, #4a5568)"></circle></g></svg>';
-                btn.innerHTML = svg + '<span style="font-size: 12px; font-weight: 500;">' + escapeHtml(it.label) + '</span>';
-                btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); handleMenuAction(it.id); });
+                    ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" style="flex-shrink:0; width:20px; height:20px;"><g fill="none" fill-rule="evenodd"><path d="M0 0h20v20H0z"></path><path fill="${iconColor}" fill-rule="nonzero" d="${iconPath}"></path></g></svg>`
+                    : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" style="flex-shrink:0; width:20px; height:20px;"><g fill="none" fill-rule="evenodd"><path d="M0 0h20v20H0z"></path><circle cx="10" cy="10" r="2.5" fill="${iconColor}"></circle></g></svg>`;
+
+                btn.innerHTML = svg + `<span style="line-height: 1;">${escapeHtml(it.label)}</span>`;
+                btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); handleMenuAction(it.id); });
                 wrap.appendChild(btn);
             });
             info.anchor.insertAdjacentElement('afterend', wrap);
         } else {
             const li = document.createElement('li');
             li.id = 'rename_list';
-            visible.forEach(function (it) {
+            visible.forEach(it => {
                 const a = document.createElement('a');
                 a.id = it.id; a.className = 'mark'; a.href = 'javascript:;'; a.textContent = it.label;
-                a.addEventListener('click', function (e) { e.preventDefault(); handleMenuAction(it.id); });
+                a.addEventListener('click', e => { e.preventDefault(); handleMenuAction(it.id); });
                 li.appendChild(a);
             });
             info.anchor.insertAdjacentElement('beforebegin', li);
         }
         return true;
     }
-    let menuInterval = setInterval(function () { injectMenu(); }, 800);
+
+    let menuInterval = setInterval(() => {
+        if (injectMenu()) clearInterval(menuInterval);
+    }, 800);
 
     // ============================================================
-    // 番号提取
+    // 番号提取（v3.2.0 限制 1-20 后不能跟字母）
     // ============================================================
-    // ★ v3.2.0：分段数字严格 1-20，后不能跟字母数字
     function extractFC2Part(str, fc2Num) {
         const s = String(str || '');
         const prefix = '(?:fc2?[-_\\s]*(?:ppv[-_\\s]*)?|ppv[-_\\s]*)0*' + fc2Num;
@@ -577,7 +559,7 @@
         if (m) return m[1].toUpperCase();
         return '';
     }
-    // ★ v3.2.0：同 extractFC2Part，数字 1-20，后不能跟字母数字
+
     function extractPart(str, code) {
         const s = String(str || '');
         const c = String(code || '');
@@ -596,6 +578,7 @@
         if (m) { const v = parseInt(m[1], 10); return (v >= 1 && v <= 20) ? String(v) : ''; }
         return '';
     }
+
     function extractJavCode(rawStr) {
         if (!rawStr) return null;
         let s = String(rawStr);
@@ -604,22 +587,27 @@
 
         let m = s.match(/\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})\b/i);
         if (m) return { code: 'FC2-PPV-' + m[1], type: 'fc2', fc2Num: m[1] };
+
         m = s.match(/\bHEYDOUGA[-_\s]*(\d{4})[-_\s]+([A-Z0-9]+)\b/i);
         if (m) return { code: 'HEYDOUGA-' + m[1] + '-' + m[2], type: 'heydouga' };
+
         m = s.match(/\bGACHI[-_\s]*(\d{3,6})\b/i);
         if (m) return { code: 'GACHI-' + m[1], type: 'gachi' };
+
         m = s.match(/\bDUGA[-_\s]+([A-Z0-9]+[-_][A-Z0-9]+)\b/i);
         if (m) return { code: 'DUGA-' + m[1].replace(/_/g, '-'), type: 'duga' };
+
         m = s.match(/\bMY[-_\s]?WIFE[-_\s]*(\d+)\b/i);
         if (m) return { code: 'MYWIFE-' + m[1], type: 'mywife' };
+
         m = s.match(/\bTOKYO[-_\s]?HOT[-_\s]*([A-Z0-9]+(?:[-_][A-Z0-9]+)?)\b/i);
         if (m) return { code: 'Tokyo-Hot-' + m[1], type: 'tokyo-hot' };
 
         const sources = 'PACOPACOMAMA|PACO|10MUSUME|10MU|1PONDO|CARIBBEANCOM|CARIBBEAN|CARIB|HEYZO';
         m = s.match(new RegExp('\\b(' + sources + ')[-_\\s]*(\\d{6})[-_](\\d{2,3})\\b', 'i'));
-        if (m) return { code: m[2] + '_' + m[3] + '-' + m[1].toUpperCase(), type: 'uncensored', prefix: m[1].toUpperCase(), date: m[2], num: m[3] };
+        if (m) return { code: m[2] + '_' + m[3] + '-' + m[1].toUpperCase(), type: 'uncensored' };
         m = s.match(new RegExp('\\b(\\d{6})[-_](\\d{2,3})[-_\\s]*(' + sources + ')\\b', 'i'));
-        if (m) return { code: m[1] + '_' + m[2] + '-' + m[3].toUpperCase(), type: 'uncensored', prefix: m[3].toUpperCase(), date: m[1], num: m[2] };
+        if (m) return { code: m[1] + '_' + m[2] + '-' + m[3].toUpperCase(), type: 'uncensored' };
         m = s.match(/\b(\d{6})[-_](\d{2,3})(?=$|[^0-9])/);
         if (m) return { code: m[1] + '_' + m[2], type: 'uncensored' };
 
@@ -638,6 +626,7 @@
         if (m && garbage.indexOf(m[1].toUpperCase()) === -1) return { code: m[1].toUpperCase() + '-' + m[2], type: 'compact' };
         return null;
     }
+
     const CODE_PREFIXES = (function () {
         const prefixes = MANUAL_PREFIXES.slice();
         const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -649,12 +638,12 @@
             const p = letters[i];
             if (GARBAGE_WORDS.indexOf(p) === -1 && prefixes.indexOf(p) === -1) prefixes.push(p);
         }
-        prefixes.sort(function (a, b) { return b.length - a.length; });
+        prefixes.sort((a, b) => b.length - a.length);
         return prefixes;
     })();
-    const CODE_PREFIX_PATTERNS = CODE_PREFIXES.map(function (p) {
-        return { prefix: p, regex: new RegExp('\\b' + p + '[-_ ]?0*(\\d{1,5})(?![0-9])', 'i') };
-    });
+
+    const CODE_PREFIX_PATTERNS = CODE_PREFIXES.map(p => ({ prefix: p, regex: new RegExp('\\b' + p + '[-_ ]?0*(\\d{1,5})(?![0-9])', 'i') }));
+
     function matchCodeByPrefix(str) {
         if (!str) return null;
         for (let i = 0; i < CODE_PREFIX_PATTERNS.length; i++) {
@@ -670,11 +659,13 @@
         }
         return null;
     }
+
     function checkUncensored(baseCode, raw) {
         if (/无码|無修正|uncensored/i.test(raw)) return true;
         if (/^Tokyo-Hot-/i.test(baseCode) || /^1PONDO-/i.test(baseCode) || /^CARIB-/i.test(baseCode) || /^HEYZO-/i.test(baseCode) || /^10MU-/i.test(baseCode) || /^MURA-/i.test(baseCode) || /^H4610-/i.test(baseCode) || /^NAMA-/i.test(baseCode) || /_/.test(baseCode)) return true;
         return false;
     }
+
     function removeCodeFromTitle(str, baseCode) {
         if (!baseCode) return str;
         let s = String(str);
@@ -696,9 +687,9 @@
     }
 
     // ============================================================
-    // 核心解析（v3.2.0：title 清理增强）
+    // 核心解析（v3.2.0 清理链）
     // ============================================================
-    const parseVideoInfo = function (origTitle, safeSuffix) {
+    const parseVideoInfo = (origTitle, safeSuffix) => {
         try {
             if (!origTitle) return null;
             let raw = String(origTitle);
@@ -706,8 +697,7 @@
             let rawForCode = safeSuffix ? raw.slice(0, raw.lastIndexOf(safeSuffix)) : raw;
 
             const markers = [];
-            rawForCode.replace(MARKER_PATTERN, function (m, p1, offset, full) {
-                // 中文不做边界检查
+            rawForCode.replace(MARKER_PATTERN, (m, p1, offset, full) => {
                 if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(m)) {
                     const prev = offset > 0 ? full[offset - 1] : '';
                     const next = offset + m.length < full.length ? full[offset + m.length] : '';
@@ -735,6 +725,7 @@
             if (extracted) {
                 queryCode = extracted.code;
                 displayCode = extracted.code;
+
                 if (extracted.type === 'fc2') {
                     part = extractFC2Part(rawForCode, extracted.fc2Num);
                     const cleanup = new RegExp('(?:fc2?[-_\\s]*(?:ppv[-_\\s]*)?|ppv[-_\\s]*)0*' + extracted.fc2Num + '(?:[-_.\\s\\[\\](){}]*(?:sp[-_.\\s]*0*\\d{0,3}|cd[-_.\\s]*0*\\d{1,3}|part[-_.\\s]*0*\\d{1,3}|\\d{1,3}|[a-d]))?', 'i');
@@ -807,7 +798,7 @@
             cleanTitle = cleanTitle.replace(/^[\s_\-\.]+|[\s_\-\.]+$/g, '').trim(); // 10. 首尾标点
             if (isPunctOnly(cleanTitle)) cleanTitle = '';                  // 11. 纯标点判断
 
-            return { queryCode: queryCode, baseCode: baseCode, fullCode: fullCode, markers: markers, date: dateStr, localTitle: cleanTitle };
+            return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
             console.error('parseVideoInfo error:', e);
             return null;
@@ -817,7 +808,7 @@
     // ============================================================
     // 新名称构建
     // ============================================================
-    const buildNewName = function (vInfo, info, suffix) {
+    const buildNewName = (vInfo, info, suffix) => {
         if (!vInfo || !vInfo.fullCode) return '';
         const s = loadSettings();
         const originalTitle = (info && info.title) || vInfo.localTitle || '';
@@ -846,7 +837,7 @@
 
         const fieldValues = { code: vInfo.fullCode, title: cleanTitle, zhTitle: cleanZhTitle, actresses: actressStr, date: dateStr };
         const enabled = { code: true, title: s.enableTitle, zhTitle: s.enableZhTitle, actresses: s.enableActresses, date: s.enableDate };
-        const order = String(s.fieldOrder || 'code,title,actresses,date').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+        const order = String(s.fieldOrder || 'code,title,actresses,date').split(',').map(x => x.trim()).filter(Boolean);
         const parts = [];
         for (let i = 0; i < order.length; i++) {
             const f = order[i];
@@ -861,8 +852,8 @@
         if (s.enableMarkers && vInfo.markers && vInfo.markers.length) {
             const uniq = Array.from(new Set(vInfo.markers)).filter(Boolean);
             const existing = name.match(/【[^】]*】/g) || [];
-            const toAdd = uniq.filter(function (m) { return existing.indexOf('【' + m + '】') === -1; });
-            if (toAdd.length) name += toAdd.map(function (m) { return '【' + m + '】'; }).join('');
+            const toAdd = uniq.filter(m => existing.indexOf('【' + m + '】') === -1);
+            if (toAdd.length) name += toAdd.map(m => '【' + m + '】').join('');
         }
 
         if (suffix) {
@@ -876,7 +867,7 @@
     // ============================================================
     // 手动命名保护
     // ============================================================
-    const isRawDownloadSiteName = function (fileName) {
+    const isRawDownloadSiteName = fileName => {
         const base = stripFileExt(String(fileName || '')).replace(/\s+/g, '').toLowerCase();
         if (!base) return false;
         if (/^(?:[a-z0-9.-]+@)?h_\d+[a-z]{2,10}\d{2,6}(?:ex)?(?:hh[bcdh])?\d*(?:[_-]?(?:4k|4ks|4k60fps|60fps|1080p|720p|fhd|hd))?\d*$/.test(base)) return true;
@@ -885,7 +876,8 @@
         if (/^(?:hhd800\.com@|www\.98t\.la@)/i.test(String(fileName))) return true;
         return false;
     };
-    const hasManualNamePayload = function (fileName, code) {
+
+    const hasManualNamePayload = (fileName, code) => {
         if (!loadSettings().protectManualName) return false;
         if (!fileName || !code) return false;
         if (isRawDownloadSiteName(fileName)) return false;
@@ -898,7 +890,7 @@
         const variants = [codeStr, codeStr.replace(/-/g, '')];
         if (prefix && num) variants.push(prefix + '-' + num, prefix + '_' + num, prefix + ' ' + num, prefix + num);
         if (prefix && numPadded) variants.push(prefix + '-' + numPadded, prefix + '_' + numPadded, prefix + ' ' + numPadded, prefix + numPadded);
-        variants.forEach(function (v) { if (v) base = base.replace(new RegExp(escapeRegExp(v).replace(/[-_\s]+/g, '[-_\\s]*'), 'ig'), ' '); });
+        variants.forEach(v => { if (v) base = base.replace(new RegExp(escapeRegExp(v).replace(/[-_\s]+/g, '[-_\\s]*'), 'ig'), ' '); });
         base = base.replace(/https?:\/\/\S+/ig, ' ');
         base = base.replace(/\b(?:www|com|net|org|cc|tv|xyz|me|la|to|info)\b/ig, ' ');
         base = base.replace(/\b(?:javdb|javbus|javlibrary|dmm|fanza|r18|torrent|magnet|bt|rarbg|thz|u3c3|sis001|sex8|98t|gg5|avsox|avmoo)\b/ig, ' ');
@@ -913,7 +905,7 @@
         base = base.replace(/中文字幕|無修正|无码|流出|破解|中字|字幕|高清|無碼/g, ' ').replace(/\s+/g, ' ').trim();
         if (!base) return false;
         if (/[぀-ヿ㐀-鿿]/.test(base)) return true;
-        const asciiWords = (base.match(/[A-Za-z]{3,}/g) || []).filter(function (w) { return !/^(the|and|for|with|you|your|her|his|new|hot|sex|jav|av)$/i.test(w); });
+        const asciiWords = (base.match(/[A-Za-z]{3,}/g) || []).filter(w => !/^(the|and|for|with|you|your|her|his|new|hot|sex|jav|av)$/i.test(w));
         return asciiWords.length >= 2 || asciiWords.join('').length >= 10;
     };
 
@@ -927,19 +919,19 @@
     let ratingCache = getCache('jb_ratingCache');
     let negativeCache = getCache('jb_negativeCache');
 
-    const isInfoCacheValid = function (code) {
+    const isInfoCacheValid = code => {
         const e = infoCache[code];
         if (!e) return false;
         if (!e.cachedAt) return true;
         return (Date.now() - Number(e.cachedAt)) < (loadSettings().cacheTtlDays || 90) * 86400000;
     };
-    const storeInfo = function (key, info) { if (info) info.cachedAt = Date.now(); infoCache[key] = info; setCache('jb_infoCache', infoCache); };
-    const isNegativeCached = function (code) {
+    const storeInfo = (key, info) => { if (info) info.cachedAt = Date.now(); infoCache[key] = info; setCache('jb_infoCache', infoCache); };
+    const isNegativeCached = code => {
         const e = negativeCache[code];
         if (!e || !e.cachedAt) return false;
         return (Date.now() - Number(e.cachedAt)) < (loadSettings().negativeCacheTtlHours || 24) * 3600000;
     };
-    const markNegativeCached = function (code) { negativeCache[code] = { cachedAt: Date.now() }; setCache('jb_negativeCache', negativeCache); };
+    const markNegativeCached = code => { negativeCache[code] = { cachedAt: Date.now() }; setCache('jb_negativeCache', negativeCache); };
 
     // ============================================================
     // 刮削源
@@ -956,21 +948,22 @@
     function trySearchVariants(code, onQuery, onFail) {
         const v = getCodeQueryVariants(code);
         let i = 0;
-        const next = function () { if (i >= v.length) return onFail && onFail(v.join('/')); const q = v[i++]; onQuery(q, next); };
+        const next = () => { if (i >= v.length) return onFail && onFail(v.join('/')); const q = v[i++]; onQuery(q, next); };
         next();
     }
+
     function fetchJavlib(code) {
-        return new Promise(function (resolve, reject) {
-            trySearchVariants(code, function (q, next) {
+        return new Promise((resolve, reject) => {
+            trySearchVariants(code, (q, next) => {
                 gmRequest({ method: 'GET', url: javlibSearchBase + encodeURIComponent(q), anonymous: true, timeout: 15000 })
-                    .then(function (res) {
+                    .then(res => {
                         const doc = parseHTML(res.responseText);
                         const a = doc.querySelector('#video_title a') || doc.querySelector('div.video a[href*="?v="]');
                         let link = a ? a.getAttribute('href') : '';
                         if (!link) { next(); return; }
                         if (link.charAt(0) === '/') link = javlibBase.replace(/\/+$/, '') + link;
                         return gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 });
-                    }).then(function (res2) {
+                    }).then(res2 => {
                         if (!res2) { next(); return; }
                         const ddoc = parseHTML(res2.responseText);
                         let ttl = '';
@@ -982,58 +975,58 @@
                         const dateEl = ddoc.querySelector('#video_date td.text');
                         const isoDate = dateEl ? normDate(dateEl.textContent.trim()) : '';
                         const actresses = [];
-                        ddoc.querySelectorAll('#video_cast td.text a').forEach(function (a) { const n = a.textContent.trim(); if (n) actresses.push(n); });
+                        ddoc.querySelectorAll('#video_cast td.text a').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
                         if (!ttl) { next(); return; }
-                        resolve({ title: ttl, date: isoDate, actresses: actresses });
-                    }).catch(function () { next(); });
-            }, function () { reject(new Error('JavLibrary 无结果')); });
+                        resolve({ title: ttl, date: isoDate, actresses });
+                    }).catch(() => { next(); });
+            }, () => { reject(new Error('JavLibrary 无结果')); });
         });
     }
+
     function fetchJavbus(code) {
-        return new Promise(function (resolve, reject) {
-            const variants = getCodeQueryVariants(code).filter(function (v) { return !/[\s_]/.test(v); });
+        return new Promise((resolve, reject) => {
+            const variants = getCodeQueryVariants(code).filter(v => !/[\s_]/.test(v));
             let vi = 0;
-            const tryOne = function (q) {
-                const tryBase = function (u) {
-                    return gmRequest({ method: 'GET', url: u + q, anonymous: true, timeout: 15000 }).then(function (res) {
-                        const doc = parseHTML(res.responseText);
-                        let ttl = '';
-                        const h3 = doc.querySelector('h3');
-                        if (h3) { ttl = h3.textContent.trim(); if (ttl.toUpperCase().indexOf(code.toUpperCase()) === 0) ttl = ttl.slice(code.length).trim(); }
-                        if (!ttl) { const img = doc.querySelector('div.photo-frame img'); if (img) ttl = img.getAttribute('title') || ''; }
-                        if (!ttl) {
-                            const t = doc.querySelector('title');
-                            if (t) { ttl = t.textContent.trim(); if (ttl.indexOf(' - JavBus') !== -1) ttl = ttl.split(' - JavBus')[0].trim(); if (ttl.toUpperCase().indexOf(code.toUpperCase()) === 0) ttl = ttl.slice(code.length).trim(); }
-                        }
-                        if (isNotFoundTitle(ttl)) ttl = '';
-                        if (!ttl) return Promise.reject();
-                        let isoDate = '';
-                        doc.querySelectorAll('p').forEach(function (p) { const t = p.textContent.trim(); if (/發行日期|发行日期/.test(t)) { const m = t.match(/(\d{4}-\d{2}-\d{2})/); if (m) isoDate = normDate(m[1]); } });
-                        if (!isoDate) { const p = doc.querySelector('.info p:nth-of-type(2)'); if (p) isoDate = normDate(p.textContent.replace(/.*?[:：]/, '').trim()); }
-                        const actresses = [];
-                        doc.querySelectorAll('span.genre a[href*="/star/"]').forEach(function (a) { const n = a.textContent.trim(); if (n) actresses.push(n); });
-                        const info = { title: ttl, date: isoDate, actresses: actresses };
-                        if (u.indexOf('uncensored') !== -1) info.uncensored = true;
-                        return info;
-                    }).catch(function () { throw new Error('fail'); });
-                };
-                tryBase(javbusBase).catch(function () { return tryBase(javbusUncensoredBase); })
-                    .then(function (i) { resolve(i); })
-                    .catch(function () { vi++; if (vi < variants.length) tryOne(variants[vi]); else reject(new Error('JavBus 无结果')); });
+            const tryOne = q => {
+                const tryBase = u => gmRequest({ method: 'GET', url: u + q, anonymous: true, timeout: 15000 }).then(res => {
+                    const doc = parseHTML(res.responseText);
+                    let ttl = '';
+                    const h3 = doc.querySelector('h3');
+                    if (h3) { ttl = h3.textContent.trim(); if (ttl.toUpperCase().indexOf(code.toUpperCase()) === 0) ttl = ttl.slice(code.length).trim(); }
+                    if (!ttl) { const img = doc.querySelector('div.photo-frame img'); if (img) ttl = img.getAttribute('title') || ''; }
+                    if (!ttl) {
+                        const t = doc.querySelector('title');
+                        if (t) { ttl = t.textContent.trim(); if (ttl.indexOf(' - JavBus') !== -1) ttl = ttl.split(' - JavBus')[0].trim(); if (ttl.toUpperCase().indexOf(code.toUpperCase()) === 0) ttl = ttl.slice(code.length).trim(); }
+                    }
+                    if (isNotFoundTitle(ttl)) ttl = '';
+                    if (!ttl) return Promise.reject();
+                    let isoDate = '';
+                    doc.querySelectorAll('p').forEach(p => { const t = p.textContent.trim(); if (/發行日期|发行日期/.test(t)) { const m = t.match(/(\d{4}-\d{2}-\d{2})/); if (m) isoDate = normDate(m[1]); } });
+                    if (!isoDate) { const p = doc.querySelector('.info p:nth-of-type(2)'); if (p) isoDate = normDate(p.textContent.replace(/.*?[:：]/, '').trim()); }
+                    const actresses = [];
+                    doc.querySelectorAll('span.genre a[href*="/star/"]').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
+                    const info = { title: ttl, date: isoDate, actresses };
+                    if (u.indexOf('uncensored') !== -1) info.uncensored = true;
+                    return info;
+                }).catch(() => { throw new Error('fail'); });
+                tryBase(javbusBase).catch(() => tryBase(javbusUncensoredBase))
+                    .then(i => resolve(i))
+                    .catch(() => { vi++; if (vi < variants.length) tryOne(variants[vi]); else reject(new Error('JavBus 无结果')); });
             };
             tryOne(variants[0]);
         });
     }
+
     function fetchXslist(code) {
-        return new Promise(function (resolve, reject) {
-            trySearchVariants(code, function (q, next) {
+        return new Promise((resolve, reject) => {
+            trySearchVariants(code, (q, next) => {
                 gmRequest({ method: 'GET', url: xslistBase + 'search?query=' + encodeURIComponent(q), anonymous: true, timeout: 15000 })
-                    .then(function (res) {
+                    .then(res => {
                         const sdoc = parseHTML(res.responseText);
-                        const parsePage = function (doc) {
+                        const parsePage = doc => {
                             const uc = code.toUpperCase().replace(/[-_\s]/g, '');
                             let tr = null;
-                            doc.querySelectorAll('#movices tbody tr').forEach(function (row) { const s = row.querySelector('td strong'); const c = (s ? s.textContent : '').trim().toUpperCase().replace(/[-_\s]/g, ''); if (c === uc) tr = row; });
+                            doc.querySelectorAll('#movices tbody tr').forEach(row => { const s = row.querySelector('td strong'); const c = (s ? s.textContent : '').trim().toUpperCase().replace(/[-_\s]/g, ''); if (c === uc) tr = row; });
                             if (!tr) return null;
                             const tds = tr.querySelectorAll('td');
                             const ttl = tds[1] ? tds[1].textContent.trim() : '';
@@ -1054,26 +1047,27 @@
                         let link = linkEl ? linkEl.getAttribute('href') : '';
                         if (!link) { next(); return; }
                         if (link.charAt(0) === '/') link = xslistBase.replace(/\/+$/, '') + link;
-                        gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 }).then(function (r2) {
+                        gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 }).then(r2 => {
                             const i2 = parsePage(parseHTML(r2.responseText));
                             if (i2) resolve(i2); else next();
-                        }).catch(function () { next(); });
-                    }).catch(function () { next(); });
-            }, function () { reject(new Error('xslist 无结果')); });
+                        }).catch(() => next());
+                    }).catch(() => next());
+            }, () => { reject(new Error('xslist 无结果')); });
         });
     }
+
     function fetchJavdb(code) {
-        return new Promise(function (resolve, reject) {
-            trySearchVariants(code, function (q, next) {
+        return new Promise((resolve, reject) => {
+            trySearchVariants(code, (q, next) => {
                 gmRequest({ method: 'GET', url: javdbSearchBase + encodeURIComponent(q) + '&f=all', anonymous: true, timeout: 15000 })
-                    .then(function (res) {
+                    .then(res => {
                         const hdoc = parseHTML(res.responseText);
                         const a = hdoc.querySelector('a[href*="/v/"]') || hdoc.querySelector('.movie-list .item a');
                         let link = a ? a.getAttribute('href') : '';
                         if (!link) { next(); return; }
                         if (link.charAt(0) === '/') link = javdbBase + link;
                         return gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 });
-                    }).then(function (r2) {
+                    }).then(r2 => {
                         if (!r2) { next(); return; }
                         const ddoc = parseHTML(r2.responseText);
                         let ttl = '';
@@ -1083,10 +1077,10 @@
                         if (ttl.toUpperCase().indexOf(code.toUpperCase()) === 0) ttl = ttl.slice(code.length).trim();
                         if (isNotFoundTitle(ttl)) ttl = '';
                         let dt = '';
-                        ddoc.querySelectorAll('.panel-block').forEach(function (b) { const t = b.textContent.trim(); if (/日期:|發行日期:|发行日期:/.test(t)) dt = t.replace(/.*?[:：]/, '').trim(); });
+                        ddoc.querySelectorAll('.panel-block').forEach(b => { const t = b.textContent.trim(); if (/日期:|發行日期:|发行日期:/.test(t)) dt = t.replace(/.*?[:：]/, '').trim(); });
                         const isoDate = normDate(dt);
                         const actorEntries = [];
-                        ddoc.querySelectorAll('a[href*="/actors/"]').forEach(function (a) {
+                        ddoc.querySelectorAll('a[href*="/actors/"]').forEach(a => {
                             const n = a.textContent.trim();
                             if (!n) return;
                             let gender = 'unknown';
@@ -1094,30 +1088,32 @@
                             if (/♀|female|woman|女(?:優|优|演员|演員)?/i.test(own)) gender = 'female';
                             else if (/♂|male|man|男(?:優|优|演员|演員)?/i.test(own)) gender = 'male';
                             else { const sib = a.nextElementSibling; if (sib) { const txt = String(sib.textContent || '').trim(); if (/♀/.test(txt)) gender = 'female'; else if (/♂/.test(txt)) gender = 'male'; } }
-                            actorEntries.push({ name: n, gender: gender });
+                            actorEntries.push({ name: n, gender });
                         });
                         if (!ttl) { next(); return; }
-                        resolve({ title: ttl, date: isoDate, actresses: actorEntries.map(function (e) { return e.name; }), actorEntries: actorEntries });
-                    }).catch(function () { next(); });
-            }, function () { reject(new Error('JavDB 无结果')); });
+                        resolve({ title: ttl, date: isoDate, actresses: actorEntries.map(e => e.name), actorEntries });
+                    }).catch(() => next());
+            }, () => { reject(new Error('JavDB 无结果')); });
         });
     }
+
     function fetchFC2PPVDB(code) {
         const num = code.match(/\d+$/)[0];
-        return gmRequest({ method: 'GET', url: fc2ppvdbBase + num, anonymous: true, timeout: 15000 }).then(function (res) {
+        return gmRequest({ method: 'GET', url: fc2ppvdbBase + num, anonymous: true, timeout: 15000 }).then(res => {
             const doc = parseHTML(res.responseText);
             let title = null;
             const link = doc.querySelector('a[href*="adult.contents.fc2.com"]');
             if (link) title = link.textContent.trim();
             if (!title) { const t = doc.querySelector('title'); title = t ? t.textContent.trim() : ''; if (title.indexOf(' - FC2PPVDB') !== -1) title = title.replace(' - FC2PPVDB', '').trim(); }
             if (!title) throw new Error('无标题');
-            return { title: title, date: '', actresses: [] };
+            return { title, date: '', actresses: [] };
         });
     }
+
     function fetchMissavFC2(code) {
         const expectedId = code.toLowerCase();
-        return new Promise(function (resolve, reject) {
-            const sign = function (path) {
+        return new Promise((resolve, reject) => {
+            const sign = path => {
                 const dbId = 'missav-default';
                 const token = 'Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV';
                 const ts = Math.floor(Date.now() / 1000);
@@ -1125,10 +1121,10 @@
                 if (!globalThis.crypto || !globalThis.crypto.subtle) return Promise.reject(new Error('WebCrypto'));
                 const enc = new TextEncoder();
                 return globalThis.crypto.subtle.importKey('raw', enc.encode(token), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
-                    .then(function (k) { return globalThis.crypto.subtle.sign('HMAC', k, enc.encode(unsigned)); })
-                    .then(function (sig) { return unsigned + '&frontend_sign=' + Array.from(new Uint8Array(sig)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join(''); });
+                    .then(k => globalThis.crypto.subtle.sign('HMAC', k, enc.encode(unsigned)))
+                    .then(sig => unsigned + '&frontend_sign=' + Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join(''));
             };
-            sign('/search/users/anonymous/items/').then(function (p) {
+            sign('/search/users/anonymous/items/').then(p => {
                 return gmRequest({
                     method: 'POST',
                     url: 'https://client-rapi-missav.recombee.com' + p,
@@ -1136,10 +1132,10 @@
                     data: JSON.stringify({ searchQuery: code, count: 10, cascadeCreate: true, returnProperties: true }),
                     anonymous: true, timeout: 15000
                 });
-            }).then(function (res) {
+            }).then(res => {
                 const data = JSON.parse(res.responseText);
                 const items = Array.isArray(data && data.recomms) ? data.recomms : [];
-                const exact = items.find(function (it) { return String((it && it.id) || '').toLowerCase() === expectedId; });
+                const exact = items.find(it => String((it && it.id) || '').toLowerCase() === expectedId);
                 if (!exact || !exact.values) throw new Error('No match');
                 const v = exact.values;
                 const title = String(v.title || '').trim();
@@ -1148,12 +1144,13 @@
                 let date = null;
                 const ra = Number(v.released_at);
                 if (Number.isFinite(ra) && ra > 0) date = new Date(ra * 1000).toISOString().slice(0, 10);
-                return { title: title, date: date, actresses: actors };
+                return { title, date, actresses: actors };
             }).then(resolve).catch(reject);
         });
     }
+
     function fetchAvsox(code) {
-        return gmRequest({ method: 'GET', url: 'https://avsox.host/cn/search/' + encodeURIComponent(code), anonymous: true, timeout: 15000 }).then(function (res) {
+        return gmRequest({ method: 'GET', url: 'https://avsox.host/cn/search/' + encodeURIComponent(code), anonymous: true, timeout: 15000 }).then(res => {
             const doc = parseHTML(res.responseText);
             const item = doc.querySelector('.movie-box');
             if (!item) throw new Error('No movie');
@@ -1163,13 +1160,14 @@
             const dEl = doc.querySelector('.date') || doc.querySelector('.info .date');
             const date = dEl ? dEl.textContent.trim() : '';
             const actresses = [];
-            doc.querySelectorAll('.star a, .actress a').forEach(function (a) { const n = a.textContent.trim(); if (n) actresses.push(n); });
+            doc.querySelectorAll('.star a, .actress a').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
             if (!title) throw new Error('No content');
-            return { title: title, date: date, actresses: actresses, uncensored: true };
+            return { title, date, actresses, uncensored: true };
         });
     }
+
     function fetchAvmoo(code) {
-        return gmRequest({ method: 'GET', url: 'https://avmoo.host/cn/search/' + encodeURIComponent(code), anonymous: true, timeout: 15000 }).then(function (res) {
+        return gmRequest({ method: 'GET', url: 'https://avmoo.host/cn/search/' + encodeURIComponent(code), anonymous: true, timeout: 15000 }).then(res => {
             const doc = parseHTML(res.responseText);
             const item = doc.querySelector('.movie-box');
             if (!item) throw new Error('No movie');
@@ -1179,37 +1177,39 @@
             const dEl = doc.querySelector('.date') || doc.querySelector('.info .date');
             const date = dEl ? dEl.textContent.trim() : '';
             const actresses = [];
-            doc.querySelectorAll('.star a, .actress a').forEach(function (a) { const n = a.textContent.trim(); if (n) actresses.push(n); });
-            return { title: title, date: date, actresses: actresses, uncensored: true };
+            doc.querySelectorAll('.star a, .actress a').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
+            return { title, date, actresses, uncensored: true };
         });
     }
+
     const SOURCE_REGISTRY = {
         javdb: fetchJavdb, javbus: fetchJavbus, javlibrary: fetchJavlib, xslist: fetchXslist,
         fc2ppvdb: fetchFC2PPVDB, missav: fetchMissavFC2, avsox: fetchAvsox, avmoo: fetchAvmoo
     };
+
     function fetchRemoteInfo(code, isUncensored) {
         const key = code.toUpperCase();
         if (isInfoCacheValid(key)) return Promise.resolve(infoCache[key]);
         if (isNegativeCached(key)) return Promise.reject(new Error('Negative'));
         const s = loadSettings();
-        const enabled = new Set(String(s.scrapeSources || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean));
+        const enabled = new Set(String(s.scrapeSources || '').split(',').map(x => x.trim()).filter(Boolean));
         const isFc2 = /^FC2-PPV-\d{5,8}$/i.test(code);
         const priority = isFc2 ? ['javdb', 'missav', 'fc2ppvdb'] : (isUncensored ? ['avsox', 'avmoo', 'javbus'] : ['javdb', 'javbus', 'javlibrary', 'xslist']);
-        const sources = priority.filter(function (k) { return enabled.has(k) && SOURCE_REGISTRY[k]; }).map(function (k) { return SOURCE_REGISTRY[k]; });
+        const sources = priority.filter(k => enabled.has(k) && SOURCE_REGISTRY[k]).map(k => SOURCE_REGISTRY[k]);
         if (!sources.length) return Promise.reject(new Error('No sources'));
-        const promises = sources.map(function (fn) { return fn(code).then(function (i) { storeInfo(key, i); return i; }).catch(function () { return null; }); });
-        return new Promise(function (resolve, reject) {
+        const promises = sources.map(fn => fn(code).then(i => { storeInfo(key, i); return i; }).catch(() => null));
+        return new Promise((resolve, reject) => {
             let settled = false;
-            const check = function () {
+            const check = () => {
                 if (settled) return;
-                Promise.allSettled(promises).then(function (rs) {
-                    const first = rs.find(function (r) { return r.status === 'fulfilled' && r.value; });
+                Promise.allSettled(promises).then(rs => {
+                    const first = rs.find(r => r.status === 'fulfilled' && r.value);
                     if (first) { settled = true; resolve(first.value); }
                     else { settled = true; markNegativeCached(key); reject(new Error('All failed')); }
                 });
             };
             let remaining = promises.length;
-            promises.forEach(function (p) { p.finally(function () { remaining--; if (remaining === 0) check(); }); });
+            promises.forEach(p => p.finally(() => { remaining--; if (remaining === 0) check(); }));
             setTimeout(check, 30000);
         });
     }
@@ -1218,37 +1218,33 @@
     // 翻译
     // ============================================================
     function translateTitleToChinese(title) {
-        return new Promise(function (resolve) {
+        return new Promise(resolve => {
             const src = String(title || '').trim();
             if (!src) { resolve(''); return; }
-            const deepL = function () {
-                return gmRequest({
-                    method: 'POST',
-                    url: 'https://oneshot-free.www.deepl.com/v1/translate',
-                    headers: { 'Authorization': 'None', 'Content-Type': 'application/json' },
-                    data: JSON.stringify({ text: [src], source_lang: 'ja', target_lang: 'zh-Hans' }),
-                    anonymous: true, timeout: 15000
-                }).then(function (r) {
-                    const d = JSON.parse(r.responseText);
-                    const t = d && d.translations && d.translations[0] && d.translations[0].text ? d.translations[0].text.trim() : '';
-                    if (t && t !== src) return t;
-                    throw new Error('empty');
-                });
-            };
-            const mm = function () {
-                return gmRequest({
-                    method: 'GET',
-                    url: 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(src) + '&langpair=ja%7Czh-CN',
-                    anonymous: true, timeout: 15000
-                }).then(function (r) {
-                    const d = JSON.parse(r.responseText);
-                    if (d.responseStatus !== 200) throw new Error('status');
-                    const t = d && d.responseData && d.responseData.translatedText ? d.responseData.translatedText.trim() : '';
-                    if (t && t !== src && !/MYMEMORY WARNING|DAILY LIMIT/i.test(t)) return t;
-                    throw new Error('invalid');
-                });
-            };
-            deepL().catch(function () { return mm(); }).then(function (t) { resolve(t); }).catch(function () { resolve(''); });
+            const deepL = () => gmRequest({
+                method: 'POST',
+                url: 'https://oneshot-free.www.deepl.com/v1/translate',
+                headers: { 'Authorization': 'None', 'Content-Type': 'application/json' },
+                data: JSON.stringify({ text: [src], source_lang: 'ja', target_lang: 'zh-Hans' }),
+                anonymous: true, timeout: 15000
+            }).then(r => {
+                const d = JSON.parse(r.responseText);
+                const t = d && d.translations && d.translations[0] && d.translations[0].text ? d.translations[0].text.trim() : '';
+                if (t && t !== src) return t;
+                throw new Error('empty');
+            });
+            const mm = () => gmRequest({
+                method: 'GET',
+                url: 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(src) + '&langpair=ja%7Czh-CN',
+                anonymous: true, timeout: 15000
+            }).then(r => {
+                const d = JSON.parse(r.responseText);
+                if (d.responseStatus !== 200) throw new Error('status');
+                const t = d && d.responseData && d.responseData.translatedText ? d.responseData.translatedText.trim() : '';
+                if (t && t !== src && !/MYMEMORY WARNING|DAILY LIMIT/i.test(t)) return t;
+                throw new Error('invalid');
+            });
+            deepL().catch(() => mm()).then(t => resolve(t)).catch(() => resolve(''));
         });
     }
 
@@ -1266,6 +1262,7 @@
             return null;
         } catch (e) { return null; }
     }
+
     async function buildNameFromInfo(vInfo, info, suffix) {
         const s = loadSettings();
         if (info && info.uncensored && vInfo.markers && vInfo.markers.indexOf('无码') === -1) vInfo.markers.push('无码');
@@ -1274,18 +1271,20 @@
             const t = await translateTitleToChinese(info.title);
             if (t && t !== info.title) zhTitle = t;
         }
-        return buildNewName(vInfo, Object.assign({}, info, { zhTitle: zhTitle }), suffix);
+        return buildNewName(vInfo, Object.assign({}, info, { zhTitle }), suffix);
     }
+
     window.rename_multi = function (fid, vInfo, suffix, callback, origFilename) {
-        getTargetName(vInfo, suffix).then(function (newName) {
+        getTargetName(vInfo, suffix).then(newName => {
             if (newName) send_115(fid, newName, vInfo.fullCode, origFilename, callback);
             else {
                 if (origFilename && hasManualNamePayload(origFilename, vInfo.queryCode)) showPageNotification(vInfo.fullCode + ' 已保护手动命名，跳过', 'info', 3000);
                 else showPageNotification('所有信息源未找到 ' + vInfo.queryCode, 'error', 4000);
                 if (typeof callback === 'function') callback();
             }
-        }).catch(function () { if (typeof callback === 'function') callback(); });
+        }).catch(() => { if (typeof callback === 'function') callback(); });
     };
+
     function local_rename(fid, vInfo, suffix, callback, origFilename) {
         const info = { title: vInfo.localTitle, date: vInfo.date, actresses: [] };
         const newName = buildNewName(vInfo, info, suffix);
@@ -1299,9 +1298,10 @@
     }
 
     // ============================================================
-    // 发送请求
+    // 发送请求（原生 fetch）
     // ============================================================
     let renameCompareList = [];
+
     function send_115(id, name, fh, origFilename, callback) {
         const fn = sanitizeFileName(name);
         fetch('https://webapi.115.com/files/edit', {
@@ -1309,38 +1309,40 @@
             credentials: 'include',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'fid=' + encodeURIComponent(id) + '&file_name=' + encodeURIComponent(fn)
-        }).then(function (r) { return r.json(); }).then(function (r) {
+        }).then(r => r.json()).then(r => {
             if (!r.state) showPageNotification(fh + ' 修改失败: ' + (r.error || ''), 'error', 3000);
             else {
                 showPageNotification(fh + ' 修改成功', 'success', 2000);
                 if (origFilename) renameCompareList.push({ original: origFilename, new: name });
             }
             if (typeof callback === 'function') callback();
-        }).catch(function () { showPageNotification(fh + ' 请求失败', 'error', 3000); if (typeof callback === 'function') callback(); });
+        }).catch(() => { showPageNotification(fh + ' 请求失败', 'error', 3000); if (typeof callback === 'function') callback(); });
     }
 
     // ============================================================
-    // 进度与通知
+    // 进度与通知（原生 DOM）
     // ============================================================
     window.renameInProgress = false;
+
     function runTasksWithLimit(tasks, limit, intervalMs, doneAll) {
         if (!tasks.length) { doneAll && doneAll(); return; }
         let idx = 0, running = 0, done = false;
-        const finish = function () { if (!done) { done = true; doneAll && doneAll(); } };
-        const next = function () {
+        const finish = () => { if (!done) { done = true; doneAll && doneAll(); } };
+        const next = () => {
             if (idx >= tasks.length && running === 0) { finish(); return; }
             while (running < limit && idx < tasks.length) {
                 if (window.progressBox && window.progressBox.paused) { setTimeout(next, 500); return; }
                 const t = tasks[idx++];
                 running++;
-                (function (task) { setTimeout(function () { task(function () { running--; setTimeout(next, intervalMs || 0); }); }, 0); })(t);
+                setTimeout(() => { t(() => { running--; setTimeout(next, intervalMs || 0); }); }, 0);
             }
         };
         next();
     }
+
     window.progressBox = {
-        init: function (title, total) {
-            this.total = total || 0; this.current = 0; this.title = title; this.paused = false;
+        init(title, total) {
+            this.total = total || 0; this.current = 0; this.title = title || '任务进度'; this.paused = false;
             let box = document.getElementById('task-progress-box');
             if (!box) {
                 document.body.insertAdjacentHTML('beforeend', '<div id="task-progress-box" style="display:none;"><div style="display:flex;align-items:center;gap:8px;"><button id="tp-pause-btn" style="width:22px;height:22px;line-height:1;border:none;border-radius:3px;background:#1890ff;color:#fff;cursor:pointer;font-size:11px;padding:0;">⏸</button><div class="tp-title"></div></div><div class="tp-bar-outer"><div class="tp-bar-inner"></div></div><div class="tp-text"></div></div>');
@@ -1355,32 +1357,34 @@
             this.update(0);
             box.style.display = '';
         },
-        update: function (done) {
-            this.current = done;
-            const pct = Math.min(100, Math.round(done * 100 / (this.total || 1)));
+        update(doneCount) {
+            this.current = doneCount;
+            const pct = Math.min(100, Math.round(doneCount * 100 / (this.total || 1)));
             const box = document.getElementById('task-progress-box');
             if (!box) return;
             box.querySelector('.tp-bar-inner').style.width = pct + '%';
-            box.querySelector('.tp-text').textContent = done + '/' + this.total + ' (' + pct + '%)';
+            box.querySelector('.tp-text').textContent = doneCount + '/' + this.total + ' (' + pct + '%)';
         },
-        finish: function () { this.paused = false; this.update(this.total); const b = document.getElementById('task-progress-box'); if (b) setTimeout(function () { b.style.display = 'none'; }, 800); }
+        finish() { this.paused = false; this.update(this.total); const b = document.getElementById('task-progress-box'); if (b) setTimeout(() => { b.style.display = 'none'; }, 800); }
     };
+
     const toastQueue = [];
     let toastActive = 0;
     const TOAST_MAX = 3;
-    const flushToast = function () { if (toastQueue.length && toastActive < TOAST_MAX) toastQueue.shift()(); };
+    const flushToast = () => { if (toastQueue.length && toastActive < TOAST_MAX) toastQueue.shift()(); };
+
     window.showPageNotification = function (msg, type, duration) {
         if (type == null) type = 'info';
         if (!duration) duration = type === 'error' ? 5000 : 3000;
-        const show = function () {
+        const show = () => {
             toastActive++;
             const id = 'cn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
-            document.body.insertAdjacentHTML('beforeend', '<div id="' + id + '" class="custom-notification ' + type + '">' + msg + '</div>');
+            document.body.insertAdjacentHTML('beforeend', `<div id="${id}" class="custom-notification ${type}">${msg}</div>`);
             const el = document.getElementById(id);
-            setTimeout(function () { el.classList.add('show'); }, 10);
-            setTimeout(function () {
+            setTimeout(() => el.classList.add('show'), 10);
+            setTimeout(() => {
                 el.classList.remove('show');
-                setTimeout(function () { el.remove(); toastActive--; flushToast(); }, 300);
+                setTimeout(() => { el.remove(); toastActive--; flushToast(); }, 300);
             }, duration);
         };
         if (toastActive >= TOAST_MAX) { toastQueue.push(show); return; }
@@ -1388,60 +1392,101 @@
     };
 
     // ============================================================
-    // 预览
+    // 改名预览（独立 CSS 注入，适配暗黑模式）
     // ============================================================
     function showRenamePreview(rows, onConfirm, onCancel) {
         const old = document.getElementById('rename-preview-overlay');
         if (old) old.remove();
+
+        const styleId = 'rename-preview-style';
+        if (!document.getElementById(styleId)) {
+            const style = document.createElement('style');
+            style.id = styleId;
+            style.textContent = `
+            .rp-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:99999; display:flex; align-items:center; justify-content:center; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+            .rp-panel { width:min(1100px,calc(100vw - 32px)); max-height:88vh; background:#fff; border-radius:12px; box-shadow:0 12px 48px rgba(0,0,0,0.35); display:flex; flex-direction:column; overflow:hidden; color:#333; }
+            .rp-header { padding:16px 20px; background:linear-gradient(135deg,#1a6dff,#1890ff); color:#fff; display:flex; justify-content:space-between; align-items:center; }
+            .rp-header h3 { margin:0; font-size:16px; font-weight:600; }
+            .rp-toolbar { padding:10px 16px; border-bottom:1px solid #eee; display:flex; gap:10px; align-items:center; }
+            .rp-toolbar button { padding:5px 12px; border:1px solid #d9d9d9; border-radius:4px; background:#fff; cursor:pointer; font-size:13px; color:#333; }
+            .rp-toolbar span { font-size:13px; color:#666; margin-left:auto; }
+            .rp-body { flex:1; overflow:auto; padding:8px 0; background:#fff; }
+            .rp-row { display:flex; align-items:flex-start; gap:10px; padding:7px 16px; border-bottom:1px solid #f5f5f5; font-size:13px; }
+            .rp-col-code { flex-shrink:0; width:150px; font-family:monospace; color:#1890ff; font-weight:600; }
+            .rp-col-old { flex:1; min-width:0; word-break:break-all; color:#333; }
+            .rp-col-new { flex:1.2; min-width:0; word-break:break-all; color:#1890ff; }
+            .rp-col-status { flex-shrink:0; width:96px; text-align:center; font-weight:500; }
+            .rp-footer { padding:12px 20px; border-top:1px solid #eee; text-align:right; background:#fafafa; }
+            .rp-footer button { padding:8px 18px; border-radius:6px; font-size:14px; cursor:pointer; }
+            .rp-btn-cancel { border:1px solid #d9d9d9; background:#fff; margin-right:10px; color:#333; }
+            .rp-btn-confirm { border:none; background:#1a6dff; color:#fff; font-weight:600; }
+
+            html[data-theme="dark"] .rp-panel, html[data-theme="dark"] .rp-body, html[data-theme="dark"] .rp-footer { background:#1e1e1e; color:#e5e7eb; border-color:#333; }
+            html[data-theme="dark"] .rp-toolbar { border-color:#333; }
+            html[data-theme="dark"] .rp-toolbar button, html[data-theme="dark"] .rp-btn-cancel { background:#2d2d2d; border-color:#444; color:#d1d5db; }
+            html[data-theme="dark"] .rp-toolbar span { color:#9ca3af; }
+            html[data-theme="dark"] .rp-row { border-color:#2d2d2d; }
+            html[data-theme="dark"] .rp-col-code { color:#60a5fa; }
+            html[data-theme="dark"] .rp-col-old { color:#cbd5e1; }
+            html[data-theme="dark"] .rp-col-new { color:#60a5fa; }
+            html[data-theme="dark"] .rp-footer { border-color:#333; }
+            html[data-theme="dark"] .rp-btn-confirm { background:#2563eb; }
+        `;
+            document.head.appendChild(style);
+        }
+
         const overlay = document.createElement('div');
         overlay.id = 'rename-preview-overlay';
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
-        overlay.innerHTML =
-            '<div style="width:min(1100px,calc(100vw - 32px));max-height:88vh;background:#fff;border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden;">' +
-            '<div style="padding:16px 20px;background:linear-gradient(135deg,#1a6dff,#1890ff);color:#fff;display:flex;justify-content:space-between;align-items:center;">' +
-            '<h3 style="margin:0;font-size:16px;">改名预览</h3>' +
-            '<span id="rename-preview-close" style="cursor:pointer;font-size:22px;">×</span>' +
-            '</div>' +
-            '<div style="padding:10px 16px;border-bottom:1px solid #eee;display:flex;gap:10px;align-items:center;">' +
-            '<button id="rp-select-all" style="padding:5px 12px;border:1px solid #d9d9d9;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;">全选</button>' +
-            '<button id="rp-invert" style="padding:5px 12px;border:1px solid #d9d9d9;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;">反选</button>' +
-            '<span id="rp-summary" style="font-size:13px;color:#666;margin-left:auto;"></span>' +
-            '</div>' +
-            '<div id="rp-body" style="flex:1;overflow:auto;padding:8px 0;"></div>' +
-            '<div style="padding:12px 20px;border-top:1px solid #eee;text-align:right;background:#fafafa;">' +
-            '<button id="rp-cancel" style="padding:8px 18px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;font-size:14px;margin-right:10px;">取消</button>' +
-            '<button id="rp-confirm" style="padding:8px 20px;border:none;border-radius:6px;background:#1a6dff;color:#fff;cursor:pointer;font-size:14px;font-weight:600;">确认改名</button>' +
-            '</div>' +
-            '</div>';
+        overlay.className = 'rp-overlay';
+        overlay.innerHTML = `
+        <div class="rp-panel">
+            <div class="rp-header">
+                <h3>改名预览</h3>
+                <span id="rename-preview-close" style="cursor:pointer;font-size:22px;line-height:1;">×</span>
+            </div>
+            <div class="rp-toolbar">
+                <button id="rp-select-all">全选</button>
+                <button id="rp-invert">反选</button>
+                <span id="rp-summary"></span>
+            </div>
+            <div id="rp-body" class="rp-body"></div>
+            <div class="rp-footer">
+                <button id="rp-cancel" class="rp-btn-cancel">取消</button>
+                <button id="rp-confirm" class="rp-btn-confirm">确认改名</button>
+            </div>
+        </div>`;
         document.body.appendChild(overlay);
+
         const body = document.getElementById('rp-body');
-        const updateSummary = function () {
-            const c = document.querySelectorAll('.rp-chk:checked').length;
-            document.getElementById('rp-summary').textContent = '共 ' + rows.length + ' 个，已选 ' + c + ' 个';
+        const updateSummary = () => {
+            const checked = document.querySelectorAll('.rp-chk:checked').length;
+            document.getElementById('rp-summary').textContent = `共 ${rows.length} 个，已选 ${checked} 个`;
         };
-        rows.forEach(function (row, idx) {
-            const div = document.createElement('div');
-            div.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:7px 16px;border-bottom:1px solid #f5f5f5;font-size:13px;';
-            const color = row.status === '手动命名保护' ? '#fa8c16' : (row.status === '未找到' || row.status === '错误' ? '#cf1322' : '#52c41a');
-            div.innerHTML =
-                '<input type="checkbox" class="rp-chk" data-idx="' + idx + '" ' + (row.checked ? 'checked' : '') + ' style="margin-top:2px;width:16px;height:16px;">' +
-                '<div style="flex-shrink:0;width:150px;font-family:monospace;color:#1890ff;font-weight:600;">' + escapeHtml(row.item.vi.fullCode) + '</div>' +
-                '<div style="flex:1;min-width:0;word-break:break-all;">' + escapeHtml(row.item.fn) + '</div>' +
-                '<div style="flex:1.2;min-width:0;word-break:break-all;color:#1890ff;">' + escapeHtml(row.newName || '—') + '</div>' +
-                '<div style="flex-shrink:0;width:96px;text-align:center;color:' + color + ';font-weight:500;">' + escapeHtml(row.status) + '</div>';
-            body.appendChild(div);
+
+        rows.forEach((row, idx) => {
+            const tr = document.createElement('div');
+            tr.className = 'rp-row';
+            const statusColor = row.status === '手动命名保护' ? '#fa8c16' : (row.status === '未找到' || row.status === '错误' ? '#cf1322' : '#52c41a');
+            tr.innerHTML = `
+            <input type="checkbox" class="rp-chk" data-idx="${idx}" ${row.checked ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;width:16px;height:16px;accent-color:#1a6dff;">
+            <div class="rp-col-code">${escapeHtml(row.item.vi.fullCode)}</div>
+            <div class="rp-col-old">${escapeHtml(row.item.fn)}</div>
+            <div class="rp-col-new">${escapeHtml(row.newName || '—')}</div>
+            <div class="rp-col-status" style="color:${statusColor};">${escapeHtml(row.status)}</div>`;
+            body.appendChild(tr);
         });
+
         updateSummary();
-        body.addEventListener('change', function (e) { if (e.target.classList.contains('rp-chk')) updateSummary(); });
-        document.getElementById('rp-select-all').addEventListener('click', function () { document.querySelectorAll('.rp-chk').forEach(function (c) { c.checked = true; }); updateSummary(); });
-        document.getElementById('rp-invert').addEventListener('click', function () { document.querySelectorAll('.rp-chk').forEach(function (c) { c.checked = !c.checked; }); updateSummary(); });
-        document.getElementById('rename-preview-close').addEventListener('click', function () { overlay.remove(); onCancel(); });
-        document.getElementById('rp-cancel').addEventListener('click', function () { overlay.remove(); onCancel(); });
-        document.getElementById('rp-confirm').addEventListener('click', function () {
-            const sel = [];
-            document.querySelectorAll('.rp-chk:checked').forEach(function (c) { sel.push(rows[Number(c.dataset.idx)]); });
+        body.addEventListener('change', e => { if (e.target.classList.contains('rp-chk')) updateSummary(); });
+        document.getElementById('rp-select-all').addEventListener('click', () => { document.querySelectorAll('.rp-chk').forEach(c => c.checked = true); updateSummary(); });
+        document.getElementById('rp-invert').addEventListener('click', () => { document.querySelectorAll('.rp-chk').forEach(c => c.checked = !c.checked); updateSummary(); });
+        document.getElementById('rename-preview-close').addEventListener('click', () => { overlay.remove(); onCancel(); });
+        document.getElementById('rp-cancel').addEventListener('click', () => { overlay.remove(); onCancel(); });
+        document.getElementById('rp-confirm').addEventListener('click', () => {
+            const selected = [];
+            document.querySelectorAll('.rp-chk:checked').forEach(c => selected.push(rows[Number(c.dataset.idx)]));
             overlay.remove();
-            onConfirm(sel);
+            onConfirm(selected);
         });
     }
 
@@ -1450,65 +1495,71 @@
     // ============================================================
     function buildPreviewRows(parsedItems, isLocal, done) {
         if (isLocal) {
-            const rows = parsedItems.map(function (item) {
+            const rows = parsedItems.map(item => {
                 const info = { title: item.vi.localTitle, date: item.vi.date, actresses: [] };
                 const newName = buildNewName(item.vi, info, item.safeSuffix);
                 const bare = buildNewName(item.vi, { title: '', date: item.vi.date, actresses: [] }, item.safeSuffix);
                 const prot = hasManualNamePayload(item.fn, item.vi.queryCode) && newName === bare;
-                return { item: item, newName: prot ? null : newName, status: prot ? '手动命名保护' : '本地', checked: !prot };
+                return { item, newName: prot ? null : newName, status: prot ? '手动命名保护' : '本地', checked: !prot };
             });
             done(rows);
             return;
         }
-        const codes = Array.from(new Set(parsedItems.map(function (i) { return i.vi.queryCode.toUpperCase(); })));
-        const missing = codes.filter(function (c) { return !isInfoCacheValid(c); });
-        const after = function () {
+        const codes = Array.from(new Set(parsedItems.map(i => i.vi.queryCode.toUpperCase())));
+        const missing = codes.filter(c => !isInfoCacheValid(c));
+        const after = () => {
             let remaining = parsedItems.length;
             const results = new Array(parsedItems.length);
-            parsedItems.forEach(function (item, idx) {
-                getTargetName(item.vi, item.safeSuffix).then(function (nn) {
+            parsedItems.forEach((item, idx) => {
+                getTargetName(item.vi, item.safeSuffix).then(nn => {
                     let st = '网络', ch = true;
                     if (!nn) { st = hasManualNamePayload(item.fn, item.vi.queryCode) ? '手动命名保护' : '未找到'; ch = false; }
-                    results[idx] = { item: item, newName: nn, status: st, checked: ch };
+                    results[idx] = { item, newName: nn, status: st, checked: ch };
                     if (--remaining === 0) done(results.filter(Boolean));
-                }).catch(function () {
-                    results[idx] = { item: item, newName: null, status: '错误', checked: false };
+                }).catch(() => {
+                    results[idx] = { item, newName: null, status: '错误', checked: false };
                     if (--remaining === 0) done(results.filter(Boolean));
                 });
             });
         };
         if (!missing.length) { after(); return; }
         let pi = 0;
-        const prefetch = function () {
+        const prefetch = () => {
             if (pi >= missing.length) { after(); return; }
             const c = missing[pi++];
-            fetchRemoteInfo(c).catch(function () { }).finally(function () { setTimeout(prefetch, 200); });
+            fetchRemoteInfo(c).catch(() => { }).finally(() => setTimeout(prefetch, 200));
         };
         const conc = Math.min(3, missing.length);
         for (let i = 0; i < conc; i++) prefetch();
     }
+
     function persistCaches() {
         setCache('jb_infoCache', infoCache);
         setCache('jb_actressCache', actressCache);
         setCache('jb_ratingCache', ratingCache);
         setCache('jb_negativeCache', negativeCache);
     }
+
     function rename(call) {
         if (window.renameInProgress) { showPageNotification('已有任务进行中', 'info', 2000); return; }
         window.renameInProgress = true;
         const s = loadSettings();
+
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择文件或文件夹', 'info', 3000); window.renameInProgress = false; return; }
+
         const parsedItems = [];
-        selected.forEach(function (item) {
+        selected.forEach(item => {
             const safeSuffix = getSafeSuffix(item.fn);
             const vi = parseVideoInfo(item.fn, safeSuffix);
-            if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, safeSuffix: safeSuffix, vi: vi });
+            if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, safeSuffix, vi });
         });
+
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); window.renameInProgress = false; return; }
+
         const isLocal = (call === local_rename);
         let finished = false;
-        const finishRename = function () {
+        const finishRename = () => {
             if (finished) return;
             finished = true;
             progressBox.finish();
@@ -1517,28 +1568,28 @@
             offerCompareExport();
             window.renameInProgress = false;
         };
-        const cancelRename = function () { persistCaches(); showPageNotification('已取消', 'info', 2000); window.renameInProgress = false; };
-        const execRename = function (rows) {
+        const cancelRename = () => { persistCaches(); showPageNotification('已取消', 'info', 2000); window.renameInProgress = false; };
+
+        const execRename = rows => {
             if (!rows.length) { cancelRename(); return; }
             progressBox.init(isLocal ? '本地番号加工' : '联网改名', rows.length);
             renameCompareList = [];
             let processed = 0;
-            const tasks = rows.map(function (row) {
-                return function (done) {
-                    send_115(row.item.fid, row.newName, row.item.vi.fullCode, row.item.fn, function () {
-                        processed++;
-                        progressBox.update(processed);
-                        done();
-                    });
-                };
+            const tasks = rows.map(row => done => {
+                send_115(row.item.fid, row.newName, row.item.vi.fullCode, row.item.fn, () => {
+                    processed++;
+                    progressBox.update(processed);
+                    done();
+                });
             });
             const conc = isLocal ? Math.max(3, s.renameConcurrency) : s.renameConcurrency;
             runTasksWithLimit(tasks, conc, 200, finishRename);
         };
-        if (isLocal) buildPreviewRows(parsedItems, true, function (rows) { showRenamePreview(rows, execRename, cancelRename); });
+
+        if (isLocal) buildPreviewRows(parsedItems, true, rows => showRenamePreview(rows, execRename, cancelRename));
         else {
             showPageNotification('正在联网生成预览...', 'info', 4000);
-            buildPreviewRows(parsedItems, false, function (rows) { showRenamePreview(rows, execRename, cancelRename); });
+            buildPreviewRows(parsedItems, false, rows => showRenamePreview(rows, execRename, cancelRename));
         }
     }
 
@@ -1553,17 +1604,17 @@
         }
     }
     function exportCompareToFile(list) {
-        const text = list.map(function (i) { return i.original + '\t' + i.new; }).join('\n');
+        const text = list.map(i => `${i.original}\t${i.new}`).join('\n');
         downloadTxt('Rename_Compare.txt', '【旧文件名】\t【新文件名】\n' + text);
     }
     function copyCompareToClipboard(list) {
-        const text = list.map(function (i) { return i.original + '\t' + i.new; }).join('\n');
+        const text = list.map(i => `${i.original}\t${i.new}`).join('\n');
         copyToClipboard('【旧文件名】\t【新文件名】\n' + text);
     }
     function backupFileNames() {
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选中要备份的文件', 'info', 3000); return; }
-        const names = selected.map(function (i) { return i.fn; }).filter(Boolean);
+        const names = selected.map(i => i.fn).filter(Boolean);
         if (!names.length) return;
         const text = names.join('\n');
         if (confirm('导出为 TXT 文件？\n（确定 = TXT，取消 = 复制到剪贴板）')) downloadTxt('115_File_Backup.txt', text);
@@ -1579,13 +1630,13 @@
     }
     function copyToClipboard(text) {
         if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).then(function () { showPageNotification('已复制', 'success', 3000); })
-                .catch(function () { GM_setClipboard(text); showPageNotification('已复制', 'success', 3000); });
+            navigator.clipboard.writeText(text).then(() => showPageNotification('已复制', 'success', 3000))
+                .catch(() => { GM_setClipboard(text); showPageNotification('已复制', 'success', 3000); });
         } else { GM_setClipboard(text); showPageNotification('已复制', 'success', 3000); }
     }
 
     // ============================================================
-    // 归档
+    // 归档（原生 fetch）
     // ============================================================
     let archiveRootCid = null, archiveRootName = null, archiveRootPath = '';
     function initArchiveRoot() {
@@ -1597,21 +1648,23 @@
 
     function getPathCid(path) {
         return fetch('https://webapi.115.com/files/getid?path=' + encodeURIComponent('/' + String(path || '').replace(/^\/+/, '')), { credentials: 'include' })
-            .then(function (r) { return r.json(); })
-            .then(function (d) { const id = d.id || d.cid || d.file_id; return id ? String(id) : null; })
-            .catch(function () { return null; });
+            .then(r => r.json())
+            .then(d => { const id = d.id || d.cid || d.file_id; return id ? String(id) : null; })
+            .catch(() => null);
     }
+
     function createFolderApi(pid, name) {
         return fetch('https://webapi.115.com/files/add', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'pid=' + encodeURIComponent(pid || 0) + '&cname=' + encodeURIComponent(name)
-        }).then(function (r) { return r.json(); }).then(function (d) {
+        }).then(r => r.json()).then(d => {
             if (d.state) return String(d.cid || d.id);
             if (d.errno === 20004) return 'CONFLICT';
             throw new Error(d.error || '创建失败');
         });
     }
+
     async function resolveArchiveRootByPath(path) {
         path = String(path || '').trim().replace(/^\/+|\/+$/g, '');
         if (!path) return { cid: null, name: null, path: '' };
@@ -1626,110 +1679,118 @@
             if (!cid) throw new Error('目录不存在且无法创建：' + parts[i]);
             parentCid = cid;
         }
-        return { cid: String(parentCid), name: parts[parts.length - 1] || '', path: path };
+        return { cid: String(parentCid), name: parts[parts.length - 1] || '', path };
     }
+
     function getSeriesFromCode(code) {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
         if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
         const m = c.match(/^([A-Z]+)-\d+/);
         return m ? m[1] : null;
     }
+
     const folderCidCache = {};
     const ROOT_DIR_CID = '0';
+
     function findOrCreateFolderAndMove(fid, folderName, ok, fail) {
         const cid = archiveRootCid || ROOT_DIR_CID;
         const cleanName = String(folderName || '').replace(/[\\/:*?"<>|]/g, ' ');
         if (folderCidCache[cleanName]) { moveFileToFolder(fid, folderCidCache[cleanName], cleanName, ok, fail); return; }
-        fetch('https://webapi.115.com/files/search?search_value=' + encodeURIComponent(cleanName) + '&format=json&aid=1&cid=' + cid + '&file_type=0&limit=1000', { credentials: 'include' })
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
+        fetch(`https://webapi.115.com/files/search?search_value=${encodeURIComponent(cleanName)}&format=json&aid=1&cid=${cid}&file_type=0&limit=1000`, { credentials: 'include' })
+            .then(r => r.json())
+            .then(d => {
                 if (d.state && d.data && d.data.count > 0) {
-                    const f = d.data.list.find(function (it) { return it.name === cleanName && it.file_type === '0'; });
+                    const f = d.data.list.find(it => it.name === cleanName && it.file_type === '0');
                     if (f) { folderCidCache[cleanName] = f.cid; moveFileToFolder(fid, f.cid, cleanName, ok, fail); return; }
                 }
-                return createFolderApi(cid, cleanName).then(function (r) {
-                    if (r === 'CONFLICT') return getPathCid(cleanName).then(function (c) { return c; });
+                return createFolderApi(cid, cleanName).then(r => {
+                    if (r === 'CONFLICT') return getPathCid(cleanName).then(c => c);
                     return r;
-                }).then(function (newCid) {
+                }).then(newCid => {
                     if (newCid) { folderCidCache[cleanName] = newCid; moveFileToFolder(fid, newCid, cleanName, ok, fail); }
                     else { showPageNotification('创建文件夹失败', 'error', 3000); if (typeof fail === 'function') fail('fail'); }
                 });
-            }).catch(function () { showPageNotification('搜索/创建文件夹失败', 'error', 3000); if (typeof fail === 'function') fail('net'); });
+            }).catch(() => { showPageNotification('搜索/创建文件夹失败', 'error', 3000); if (typeof fail === 'function') fail('net'); });
     }
+
     function moveFileToFolder(fid, targetCid, folderName, ok, fail) {
         fetch('https://webapi.115.com/files/move', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'pid=' + encodeURIComponent(targetCid) + '&fid=' + encodeURIComponent(fid)
-        }).then(function (r) { return r.json(); }).then(function (d) {
+        }).then(r => r.json()).then(d => {
             if (d.state) { showPageNotification('已归档到 ' + folderName, 'success', 2000); if (typeof ok === 'function') ok(); }
             else { showPageNotification('归档失败: ' + (d.error || ''), 'error', 5000); if (typeof fail === 'function') fail(d.error); }
-        }).catch(function () { showPageNotification('移动请求失败', 'error', 5000); if (typeof fail === 'function') fail('net'); });
+        }).catch(() => { showPageNotification('移动请求失败', 'error', 5000); if (typeof fail === 'function') fail('net'); });
     }
+
     function archiveToActorFolder() {
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择', 'info', 3000); return; }
         if (!archiveRootCid) { showPageNotification('请先设置归档根目录', 'error', 5000); return; }
+
         const parsedItems = [];
-        selected.forEach(function (item) {
+        selected.forEach(item => {
             const ss = getSafeSuffix(item.fn);
             const vi = parseVideoInfo(item.fn, ss);
-            if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, vi: vi });
+            if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, vi });
         });
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); return; }
-        const codes = Array.from(new Set(parsedItems.map(function (i) { return i.vi.queryCode.toUpperCase(); })));
-        const missing = codes.filter(function (c) {
+
+        const codes = Array.from(new Set(parsedItems.map(i => i.vi.queryCode.toUpperCase())));
+        const missing = codes.filter(c => {
             if (actressCache[c] && actressCache[c].length) return false;
             if (isInfoCacheValid(c) && infoCache[c].actresses && infoCache[c].actresses.length) { actressCache[c] = infoCache[c].actresses; return false; }
             return true;
         });
-        const start = function () {
+
+        const start = () => {
             const s = loadSettings();
             progressBox.init('归档', parsedItems.length);
             let processed = 0, success = 0;
-            const tasks = parsedItems.map(function (item) {
-                return function (done) {
-                    const code = item.vi.queryCode;
-                    if (/^FC2-PPV-\d{5,8}$/i.test(code)) {
-                        findOrCreateFolderAndMove(item.fid, 'FC2', function () { processed++; success++; progressBox.update(processed); done(); }, function () { processed++; progressBox.update(processed); done(); });
-                    } else {
-                        let folderName = '';
-                        const key = code.toUpperCase();
-                        const entries = (isInfoCacheValid(key) && infoCache[key].actorEntries) || [];
-                        const rawA = (actressCache[key] && actressCache[key][0]) || '';
-                        if (entries.length > 0) {
-                            const pref = entries.find(function (e) { return e.gender === 'female'; }) || entries.find(function (e) { return e.gender === 'unknown'; }) || entries[0];
-                            folderName = pref ? getStandardActressName(pref.name) : '';
-                        } else if (rawA) folderName = getStandardActressName(rawA);
-                        if (!folderName) folderName = getSeriesFromCode(code) || '其他';
-                        findOrCreateFolderAndMove(item.fid, folderName, function () { processed++; success++; progressBox.update(processed); done(); }, function () { processed++; progressBox.update(processed); done(); });
-                    }
-                };
+            const tasks = parsedItems.map(item => done => {
+                const code = item.vi.queryCode;
+                if (/^FC2-PPV-\d{5,8}$/i.test(code)) {
+                    findOrCreateFolderAndMove(item.fid, 'FC2', () => { processed++; success++; progressBox.update(processed); done(); }, () => { processed++; progressBox.update(processed); done(); });
+                } else {
+                    let folderName = '';
+                    const key = code.toUpperCase();
+                    const entries = (isInfoCacheValid(key) && infoCache[key].actorEntries) || [];
+                    const rawA = (actressCache[key] && actressCache[key][0]) || '';
+                    if (entries.length > 0) {
+                        const pref = entries.find(e => e.gender === 'female') || entries.find(e => e.gender === 'unknown') || entries[0];
+                        folderName = pref ? getStandardActressName(pref.name) : '';
+                    } else if (rawA) folderName = getStandardActressName(rawA);
+                    if (!folderName) folderName = getSeriesFromCode(code) || '其他';
+                    findOrCreateFolderAndMove(item.fid, folderName, () => { processed++; success++; progressBox.update(processed); done(); }, () => { processed++; progressBox.update(processed); done(); });
+                }
             });
-            runTasksWithLimit(tasks, s.archiveConcurrency || 3, 500, function () {
+            runTasksWithLimit(tasks, s.archiveConcurrency || 3, 500, () => {
                 progressBox.finish();
                 showPageNotification('归档完成：成功 ' + success + '/' + parsedItems.length, 'success', 5000);
                 persistCaches();
             });
         };
+
         if (missing.length) {
             progressBox.init('预取演员信息', missing.length);
             let i = 0;
-            const next = function () {
+            const next = () => {
                 if (i >= missing.length) { progressBox.finish(); start(); return; }
                 const code = missing[i++];
                 progressBox.update(i);
-                fetchRemoteInfo(code).then(function (info) {
+                fetchRemoteInfo(code).then(info => {
                     if (info) {
                         infoCache[code.toUpperCase()] = info;
                         if (info.actresses && info.actresses.length) actressCache[code.toUpperCase()] = info.actresses;
                     }
-                }).finally(function () { setTimeout(next, 500); });
+                }).finally(() => setTimeout(next, 500));
             };
             const conc = Math.min(2, missing.length);
             for (let j = 0; j < conc; j++) next();
         } else start();
     }
+
     function getBucketFolderName(code) {
         const c = String(code).toUpperCase();
         if (/^FC2-PPV/.test(c)) return 'FC2';
@@ -1741,27 +1802,28 @@
         }
         return '其他';
     }
+
     function archiveToBucketFolder() {
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择', 'info', 3000); return; }
         if (!archiveRootCid) { showPageNotification('请先设置归档根目录', 'error', 5000); return; }
+
         const parsedItems = [];
-        selected.forEach(function (item) {
+        selected.forEach(item => {
             const ss = getSafeSuffix(item.fn);
             const vi = parseVideoInfo(item.fn, ss);
-            if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, vi: vi });
+            if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, vi });
         });
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); return; }
+
         const s = loadSettings();
         progressBox.init('分桶归档', parsedItems.length);
         let processed = 0, success = 0;
-        const tasks = parsedItems.map(function (item) {
-            return function (done) {
-                const bucket = getBucketFolderName(item.vi.queryCode);
-                findOrCreateFolderAndMove(item.fid, bucket, function () { processed++; success++; progressBox.update(processed); done(); }, function () { processed++; progressBox.update(processed); done(); });
-            };
+        const tasks = parsedItems.map(item => done => {
+            const bucket = getBucketFolderName(item.vi.queryCode);
+            findOrCreateFolderAndMove(item.fid, bucket, () => { processed++; success++; progressBox.update(processed); done(); }, () => { processed++; progressBox.update(processed); done(); });
         });
-        runTasksWithLimit(tasks, s.archiveConcurrency || 3, 500, function () {
+        runTasksWithLimit(tasks, s.archiveConcurrency || 3, 500, () => {
             progressBox.finish();
             showPageNotification('分桶归档完成：成功 ' + success + '/' + parsedItems.length, 'success', 5000);
         });
@@ -1771,10 +1833,10 @@
     // 评分
     // ============================================================
     function fetchRatingForCode(code) {
-        return new Promise(function (resolve) {
+        return new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'GET', url: javdbSearchBase + encodeURIComponent(code) + '&f=all', timeout: 15000, anonymous: true,
-                onload: function (xhr) {
+                onload: xhr => {
                     if (xhr.status !== 200) { resolve(null); return; }
                     try {
                         const doc = parseHTML(xhr.responseText);
@@ -1788,7 +1850,7 @@
                         const href = a.getAttribute('href');
                         GM_xmlhttpRequest({
                             method: 'GET', url: javdbBase + (href.charAt(0) === '/' ? href : '/' + href), timeout: 15000, anonymous: true,
-                            onload: function (dx) {
+                            onload: dx => {
                                 try {
                                     const dd = parseHTML(dx.responseText);
                                     const rEl = dd.querySelector('.panel-block .value');
@@ -1796,64 +1858,67 @@
                                     resolve(null);
                                 } catch (e) { resolve(null); }
                             },
-                            onerror: function () { resolve(null); }, ontimeout: function () { resolve(null); }
+                            onerror: () => resolve(null), ontimeout: () => resolve(null)
                         });
                     } catch (e) { resolve(null); }
                 },
-                onerror: function () { resolve(null); }, ontimeout: function () { resolve(null); }
+                onerror: () => resolve(null), ontimeout: () => resolve(null)
             });
         });
     }
+
     function update115Rating(fid, star, fh, fname, callback) {
         star = Math.max(1, Math.min(5, star));
-        const finish = function (ok) { showPageNotification('"' + fh + '"评分' + (ok ? '更新为 ' + star + ' 星' : '失败'), ok ? 'success' : 'error', 2000); callback(ok); };
+        const finish = ok => { showPageNotification(`"${fh}"评分${ok ? `更新为 ${star} 星` : '失败'}`, ok ? 'success' : 'error', 2000); callback(ok); };
         fetch('https://webapi.115.com/files/score', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'file_id=' + encodeURIComponent(fid) + '&score=' + star
-        }).then(function (r) { return r.json(); }).then(function (r) { if (r && r.state) finish(true); else finish(false); })
-            .catch(function () { finish(false); });
+        }).then(r => r.json()).then(r => { if (r && r.state) finish(true); else finish(false); })
+            .catch(() => finish(false));
     }
+
     function getJavdbRating() {
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择', 'info', 3000); return; }
         const parsedItems = [];
-        selected.forEach(function (item) {
+        selected.forEach(item => {
             const ss = getSafeSuffix(item.fn);
             const vi = parseVideoInfo(item.fn, ss);
-            if (vi && vi.queryCode) parsedItems.push({ fid: item.fid, fn: item.fn, vi: vi });
+            if (vi && vi.queryCode) parsedItems.push({ fid: item.fid, fn: item.fn, vi });
         });
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); return; }
-        const codes = Array.from(new Set(parsedItems.map(function (i) { return i.vi.queryCode.toUpperCase(); })));
-        const missing = codes.filter(function (c) { return !ratingCache[c]; });
-        const start = function () {
+
+        const codes = Array.from(new Set(parsedItems.map(i => i.vi.queryCode.toUpperCase())));
+        const missing = codes.filter(c => !ratingCache[c]);
+
+        const start = () => {
             progressBox.init('更新评分', parsedItems.length);
             let processed = 0, success = 0;
-            const tasks = parsedItems.map(function (item) {
-                return function (done) {
-                    const code = item.vi.queryCode.toUpperCase();
-                    const star = ratingCache[code];
-                    if (star) {
-                        update115Rating(item.fid, star, item.vi.queryCode, item.fn, function (ok) {
-                            processed++; if (ok) success++; progressBox.update(processed); done();
-                        });
-                    } else { processed++; progressBox.update(processed); done(); }
-                };
+            const tasks = parsedItems.map(item => done => {
+                const code = item.vi.queryCode.toUpperCase();
+                const star = ratingCache[code];
+                if (star) {
+                    update115Rating(item.fid, star, item.vi.queryCode, item.fn, ok => {
+                        processed++; if (ok) success++; progressBox.update(processed); done();
+                    });
+                } else { processed++; progressBox.update(processed); done(); }
             });
-            runTasksWithLimit(tasks, 2, 300, function () {
+            runTasksWithLimit(tasks, 2, 300, () => {
                 progressBox.finish();
                 showPageNotification('评分完成：成功 ' + success + '/' + parsedItems.length, 'success', 5000);
                 setCache('jb_ratingCache', ratingCache);
             });
         };
+
         if (missing.length) {
             progressBox.init('获取评分', missing.length);
             let i = 0;
-            const next = function () {
+            const next = () => {
                 if (i >= missing.length) { progressBox.finish(); start(); return; }
                 const code = missing[i++];
                 progressBox.update(i);
-                fetchRatingForCode(code).then(function (s) { if (s) ratingCache[code] = s; }).finally(function () { setTimeout(next, 300); });
+                fetchRatingForCode(code).then(s => { if (s) ratingCache[code] = s; }).finally(() => setTimeout(next, 300));
             };
             const conc = Math.min(2, missing.length);
             for (let j = 0; j < conc; j++) next();
@@ -1868,85 +1933,88 @@
         if (old) old.remove();
         loadSettings();
         const s = SETTINGS;
-        const orderArr = String(s.fieldOrder).split(',').map(function (x) { return x.trim(); }).filter(Boolean);
-        const enabledSrc = new Set(String(s.scrapeSources).split(',').map(function (x) { return x.trim(); }).filter(Boolean));
+        const orderArr = String(s.fieldOrder).split(',').map(x => x.trim()).filter(Boolean);
+        const enabledSrc = new Set(String(s.scrapeSources).split(',').map(x => x.trim()).filter(Boolean));
         const allSrc = ['javdb', 'javbus', 'javlibrary', 'xslist', 'fc2ppvdb', 'missav', 'avsox', 'avmoo'];
         const srcLabels = { javdb: 'JavDB', javbus: 'JavBus', javlibrary: 'JavLibrary', xslist: 'Xslist', fc2ppvdb: 'FC2PPVDB', missav: 'MissAV', avsox: 'Avsox', avmoo: 'AVMoo' };
         const mv = s.menuVisibility || {};
-        const renderField = function () {
-            return orderArr.map(function (key, i) {
-                const def = FIELD_DEFINITIONS[key]; if (!def) return '';
-                const checked = def.fixed || (s[def.settingKey] !== false);
-                const dis = def.fixed;
-                return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;margin-bottom:6px;">' +
-                    '<span style="flex:0 0 26px;color:#94a3b8;font-weight:600;">' + (i + 1) + '.</span>' +
-                    '<label style="flex:1;display:flex;align-items:center;gap:8px;cursor:' + (dis ? 'default' : 'pointer') + ';">' +
-                    '<input type="checkbox" data-field-enable="' + key + '" ' + (checked ? 'checked' : '') + ' ' + (dis ? 'disabled' : '') + '>' +
-                    '<span style="font-size:13px;">' + def.label + '</span>' + (def.fixed ? '<span style="font-size:11px;color:#94a3b8;">(必需)</span>' : '') +
-                    '</label>' +
-                    '<button type="button" data-field-up="' + key + '" ' + (i === 0 ? 'disabled' : '') + ' style="padding:3px 9px;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;">↑</button>' +
-                    '<button type="button" data-field-down="' + key + '" ' + (i === orderArr.length - 1 ? 'disabled' : '') + ' style="padding:3px 9px;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;">↓</button>' +
-                    '</div>';
-            }).join('');
-        };
+
+        const renderField = () => orderArr.map((key, i) => {
+            const def = FIELD_DEFINITIONS[key]; if (!def) return '';
+            const checked = def.fixed || (s[def.settingKey] !== false);
+            const dis = def.fixed;
+            return `
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;margin-bottom:6px;">
+                <span style="flex:0 0 26px;color:#94a3b8;font-weight:600;">${i + 1}.</span>
+                <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:${dis ? 'default' : 'pointer'};">
+                    <input type="checkbox" data-field-enable="${key}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}>
+                    <span style="font-size:13px;">${def.label}</span>${def.fixed ? '<span style="font-size:11px;color:#94a3b8;">(必需)</span>' : ''}
+                </label>
+                <button type="button" data-field-up="${key}" ${i === 0 ? 'disabled' : ''} style="padding:3px 9px;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;">↑</button>
+                <button type="button" data-field-down="${key}" ${i === orderArr.length - 1 ? 'disabled' : ''} style="padding:3px 9px;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;">↓</button>
+            </div>`;
+        }).join('');
+
         const overlay = document.createElement('div');
         overlay.id = 'rename2026-settings';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999999;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
-        overlay.innerHTML =
-            '<div style="width:min(760px,calc(100vw - 32px));max-height:90vh;background:#fff;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;">' +
-            '<div style="padding:14px 20px;background:linear-gradient(135deg,#1a6dff,#1890ff);color:#fff;display:flex;justify-content:space-between;align-items:center;">' +
-            '<h3 style="margin:0;font-size:16px;">115Rename 设置 · v' + SCRIPT_VERSION + '</h3>' +
-            '<button id="rs-close" style="background:transparent;border:0;color:#fff;font-size:22px;cursor:pointer;">×</button>' +
-            '</div>' +
-            '<div style="padding:16px 20px;overflow:auto;flex:1;">' +
-            '<div style="margin-bottom:20px;">' +
-            '<h4 style="margin:0 0 8px;font-size:14px;">字段顺序与开关</h4>' +
-            '<div id="rs-field-list">' + renderField() + '</div>' +
-            '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">' +
-            '<label><span style="font-size:12px;">字段分隔符</span><input type="text" id="rs-field-sep" value="' + escapeHtml(s.fieldSeparator) + '" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>' +
-            '<label><span style="font-size:12px;">日期前缀</span><input type="text" id="rs-date-prefix" value="' + escapeHtml(s.datePrefix) + '" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>' +
-            '<label><span style="font-size:12px;">女优分隔符</span><input type="text" id="rs-actress-sep" value="' + escapeHtml(s.actressSeparator) + '" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>' +
-            '<label><span style="font-size:12px;">并发数</span><input type="number" id="rs-rename-concurrency" value="' + s.renameConcurrency + '" min="1" max="10" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>' +
-            '</div>' +
-            '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">选项</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-translate" ' + (s.translateChinese ? 'checked' : '') + '><span style="font-size:13px;">翻译中文标题</span></label>' +
-            '<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-enable-markers" ' + (s.enableMarkers ? 'checked' : '') + '><span style="font-size:13px;">附加【】标记</span></label>' +
-            '<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-protect-manual" ' + (s.protectManualName ? 'checked' : '') + '><span style="font-size:13px;">保护手动命名</span></label>' +
-            '<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-cd-prefix" ' + (s.useCdPrefix ? 'checked' : '') + '><span style="font-size:13px;">分段用 cd 前缀</span></label>' +
-            '</div></div>' +
-            '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">右键菜单</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">' +
-            MENU_ITEMS.map(function (it) { return '<label style="display:flex;align-items:center;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;font-size:12px;"><input type="checkbox" data-menu-vis="' + it.key + '" ' + (mv[it.key] !== false ? 'checked' : '') + '><span>' + it.label + '</span></label>'; }).join('') +
-            '</div></div>' +
-            '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">刮削源</h4><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">' +
-            allSrc.map(function (k) { return '<label style="display:flex;align-items:center;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;font-size:12px;"><input type="checkbox" data-source="' + k + '" ' + (enabledSrc.has(k) ? 'checked' : '') + '><span>' + srcLabels[k] + '</span></label>'; }).join('') +
-            '</div></div>' +
-            '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">归档根目录</h4>' +
-            '<p style="margin:0 0 8px;font-size:12px;color:#64748b;">当前：' + (archiveRootCid ? '「' + escapeHtml(archiveRootPath || archiveRootName) + '」' : '未设置') + '</p>' +
-            '<div style="display:flex;gap:8px;"><input type="text" id="rs-archive-path" value="' + escapeHtml(s.archiveRootPath || '') + '" placeholder="/归档" style="flex:1;height:34px;padding:0 10px;border:1px solid #cbd5e1;border-radius:6px;">' +
-            '<button id="rs-archive-apply" style="padding:7px 14px;border:0;background:#1a6dff;color:#fff;border-radius:6px;cursor:pointer;">解析</button></div>' +
-            '<button id="rs-clear-archive-root" style="margin-top:8px;padding:6px 14px;border:1px solid #fca5a5;background:#fff1f2;color:#b91c1c;border-radius:6px;cursor:pointer;font-size:12px;">清除</button>' +
-            '</div>' +
-            '</div>' +
-            '<div style="padding:12px 20px;border-top:1px solid #eee;background:#fafafa;display:flex;justify-content:space-between;">' +
-            '<button id="rs-reset" style="padding:7px 14px;border:1px solid #fca5a5;background:#fff1f2;color:#b91c1c;border-radius:6px;cursor:pointer;">恢复默认</button>' +
-            '<div><button id="rs-cancel" style="padding:7px 18px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;margin-right:8px;">取消</button>' +
-            '<button id="rs-save" style="padding:7px 20px;border:0;background:#1a6dff;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;">保存</button></div>' +
-            '</div>' +
-            '</div>';
+        overlay.innerHTML = `
+        <div style="width:min(760px,calc(100vw - 32px));max-height:90vh;background:#fff;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;color:#1f2937;">
+            <div style="padding:14px 20px;background:linear-gradient(135deg,#1a6dff,#1890ff);color:#fff;display:flex;justify-content:space-between;align-items:center;">
+                <h3 style="margin:0;font-size:16px;">115Rename 设置 · v${SCRIPT_VERSION}</h3>
+                <button id="rs-close" style="background:transparent;border:0;color:#fff;font-size:22px;cursor:pointer;">×</button>
+            </div>
+            <div style="padding:16px 20px;overflow:auto;flex:1;">
+                <div style="margin-bottom:20px;">
+                    <h4 style="margin:0 0 8px;font-size:14px;">字段顺序与开关</h4>
+                    <div id="rs-field-list">${renderField()}</div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
+                    <label><span style="font-size:12px;">字段分隔符</span><input type="text" id="rs-field-sep" value="${escapeHtml(s.fieldSeparator)}" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
+                    <label><span style="font-size:12px;">日期前缀</span><input type="text" id="rs-date-prefix" value="${escapeHtml(s.datePrefix)}" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
+                    <label><span style="font-size:12px;">女优分隔符</span><input type="text" id="rs-actress-sep" value="${escapeHtml(s.actressSeparator)}" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
+                    <label><span style="font-size:12px;">并发数</span><input type="number" id="rs-rename-concurrency" value="${s.renameConcurrency}" min="1" max="10" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
+                </div>
+                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">选项</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-translate" ${s.translateChinese ? 'checked' : ''}><span style="font-size:13px;">翻译中文标题</span></label>
+                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-enable-markers" ${s.enableMarkers ? 'checked' : ''}><span style="font-size:13px;">附加【】标记</span></label>
+                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-protect-manual" ${s.protectManualName ? 'checked' : ''}><span style="font-size:13px;">保护手动命名</span></label>
+                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-cd-prefix" ${s.useCdPrefix ? 'checked' : ''}><span style="font-size:13px;">分段用 cd 前缀</span></label>
+                </div></div>
+                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">右键菜单</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                    ${MENU_ITEMS.map(it => `<label style="display:flex;align-items:center;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;font-size:12px;"><input type="checkbox" data-menu-vis="${it.key}" ${mv[it.key] !== false ? 'checked' : ''}><span>${it.label}</span></label>`).join('')}
+                </div></div>
+                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">刮削源</h4><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+                    ${allSrc.map(k => `<label style="display:flex;align-items:center;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;font-size:12px;"><input type="checkbox" data-source="${k}" ${enabledSrc.has(k) ? 'checked' : ''}><span>${srcLabels[k]}</span></label>`).join('')}
+                </div></div>
+                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">归档根目录</h4>
+                    <p style="margin:0 0 8px;font-size:12px;color:#64748b;">当前：${archiveRootCid ? '「' + escapeHtml(archiveRootPath || archiveRootName) + '」' : '未设置'}</p>
+                    <div style="display:flex;gap:8px;"><input type="text" id="rs-archive-path" value="${escapeHtml(s.archiveRootPath || '')}" placeholder="/归档" style="flex:1;height:34px;padding:0 10px;border:1px solid #cbd5e1;border-radius:6px;">
+                    <button id="rs-archive-apply" style="padding:7px 14px;border:0;background:#1a6dff;color:#fff;border-radius:6px;cursor:pointer;">解析</button></div>
+                    <button id="rs-clear-archive-root" style="margin-top:8px;padding:6px 14px;border:1px solid #fca5a5;background:#fff1f2;color:#b91c1c;border-radius:6px;cursor:pointer;font-size:12px;">清除</button>
+                </div>
+            </div>
+            <div style="padding:12px 20px;border-top:1px solid #eee;background:#fafafa;display:flex;justify-content:space-between;">
+                <button id="rs-reset" style="padding:7px 14px;border:1px solid #fca5a5;background:#fff1f2;color:#b91c1c;border-radius:6px;cursor:pointer;">恢复默认</button>
+                <div><button id="rs-cancel" style="padding:7px 18px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;margin-right:8px;">取消</button>
+                <button id="rs-save" style="padding:7px 20px;border:0;background:#1a6dff;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;">保存</button></div>
+            </div>
+        </div>`;
         document.body.appendChild(overlay);
-        const refresh = function () { overlay.querySelector('#rs-field-list').innerHTML = renderField(); bind(); };
+
+        const refresh = () => { overlay.querySelector('#rs-field-list').innerHTML = renderField(); bind(); };
         function bind() {
-            overlay.querySelectorAll('[data-field-up]').forEach(function (b) {
-                b.onclick = function () { const k = b.dataset.fieldUp; const i = orderArr.indexOf(k); if (i <= 0) return; const t = orderArr[i - 1]; orderArr[i - 1] = orderArr[i]; orderArr[i] = t; refresh(); };
+            overlay.querySelectorAll('[data-field-up]').forEach(b => {
+                b.onclick = () => { const k = b.dataset.fieldUp; const i = orderArr.indexOf(k); if (i <= 0) return; const t = orderArr[i - 1]; orderArr[i - 1] = orderArr[i]; orderArr[i] = t; refresh(); };
             });
-            overlay.querySelectorAll('[data-field-down]').forEach(function (b) {
-                b.onclick = function () { const k = b.dataset.fieldDown; const i = orderArr.indexOf(k); if (i < 0 || i >= orderArr.length - 1) return; const t = orderArr[i]; orderArr[i] = orderArr[i + 1]; orderArr[i + 1] = t; refresh(); };
+            overlay.querySelectorAll('[data-field-down]').forEach(b => {
+                b.onclick = () => { const k = b.dataset.fieldDown; const i = orderArr.indexOf(k); if (i < 0 || i >= orderArr.length - 1) return; const t = orderArr[i]; orderArr[i] = orderArr[i + 1]; orderArr[i + 1] = t; refresh(); };
             });
         }
         bind();
-        overlay.querySelector('#rs-close').onclick = function () { overlay.remove(); };
-        overlay.querySelector('#rs-cancel').onclick = function () { overlay.remove(); };
+
+        overlay.querySelector('#rs-close').onclick = () => overlay.remove();
+        overlay.querySelector('#rs-cancel').onclick = () => overlay.remove();
         overlay.querySelector('#rs-archive-apply').onclick = async function () {
             const p = overlay.querySelector('#rs-archive-path').value.trim();
             if (!p) { alert('请输入路径'); return; }
@@ -1959,29 +2027,29 @@
             } catch (e) { alert('失败：' + (e.message || e)); }
             finally { b.disabled = false; b.textContent = '解析'; }
         };
-        overlay.querySelector('#rs-clear-archive-root').onclick = function () {
+        overlay.querySelector('#rs-clear-archive-root').onclick = () => {
             if (!confirm('清除？')) return;
             archiveRootCid = null; archiveRootName = null; archiveRootPath = '';
             saveSettings({ archiveRootCid: null, archiveRootName: null, archiveRootPath: '' });
             showPageNotification('已清除', 'info', 2000); overlay.remove(); cleanupRootInfo(); showRootInfo();
         };
-        overlay.querySelector('#rs-reset').onclick = function () {
+        overlay.querySelector('#rs-reset').onclick = () => {
             if (!confirm('恢复默认？（保留归档根目录）')) return;
             const keep = { archiveRootCid: SETTINGS.archiveRootCid, archiveRootName: SETTINGS.archiveRootName, archiveRootPath: SETTINGS.archiveRootPath };
             GM_setValue('rename2026_settings', '{}'); SETTINGS = null;
             if (keep.archiveRootCid) saveSettings(keep);
             overlay.remove(); showPageNotification('已恢复默认', 'success', 2000);
         };
-        overlay.querySelector('#rs-save').onclick = function () {
+        overlay.querySelector('#rs-save').onclick = () => {
             const em = {};
-            ['title', 'zhTitle', 'actresses', 'date'].forEach(function (k) {
-                const el = overlay.querySelector('[data-field-enable="' + k + '"]');
+            ['title', 'zhTitle', 'actresses', 'date'].forEach(k => {
+                const el = overlay.querySelector(`[data-field-enable="${k}"]`);
                 if (el) em['enable' + k.charAt(0).toUpperCase() + k.slice(1)] = el.checked;
             });
             const src = [];
-            overlay.querySelectorAll('[data-source]').forEach(function (cb) { if (cb.checked) src.push(cb.dataset.source); });
+            overlay.querySelectorAll('[data-source]').forEach(cb => { if (cb.checked) src.push(cb.dataset.source); });
             const mv2 = {};
-            overlay.querySelectorAll('[data-menu-vis]').forEach(function (cb) { mv2[cb.dataset.menuVis] = cb.checked; });
+            overlay.querySelectorAll('[data-menu-vis]').forEach(cb => { mv2[cb.dataset.menuVis] = cb.checked; });
             const upd = {
                 fieldOrder: orderArr.join(','),
                 fieldSeparator: overlay.querySelector('#rs-field-sep').value || ' ',
@@ -2009,7 +2077,7 @@
     // ============================================================
     const rootInfoId = 'archive-root-info-' + Date.now();
     function cleanupRootInfo() {
-        try { document.querySelectorAll('[id^="archive-root-info"]').forEach(function (el) { el.remove(); }); } catch (e) { }
+        try { document.querySelectorAll('[id^="archive-root-info"]').forEach(el => { el.remove(); }); } catch (e) { }
     }
     function showRootInfo() {
         cleanupRootInfo();
@@ -2054,8 +2122,8 @@
     try {
         GM_registerMenuCommand('⚙️ 115Rename 设置', openSettingsPanel);
         GM_registerMenuCommand('📋 备份文件名', backupFileNames);
-        GM_registerMenuCommand('ℹ️ 版本 v' + SCRIPT_VERSION, function () { showPageNotification('115Rename2026 v' + SCRIPT_VERSION, 'info', 3000); });
+        GM_registerMenuCommand('ℹ️ 版本 v' + SCRIPT_VERSION, () => showPageNotification('115Rename2026 v' + SCRIPT_VERSION, 'info', 3000));
     } catch (e) { }
 
-    console.log('115Rename2026 v' + SCRIPT_VERSION + ' 已加载（分辨率清理 + 无码/破解识别增强）');
+    console.log('115Rename2026 v' + SCRIPT_VERSION + ' 已加载（全面适配新版 115 & 样式完美对齐）');
 })();
