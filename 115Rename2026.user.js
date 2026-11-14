@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         3.1.1
-// @description     115 新版适配｜字段顺序自定义｜FC2 分段修复｜参考 JAV 老司机番号识别｜多源检索｜菜单样式统一
+// @version         3.2.0
+// @description     115 新版适配｜字段顺序自定义｜FC2 分段修复｜多源检索｜分辨率清理｜无码/破解识别增强
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -42,7 +42,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.1.1';
+    const SCRIPT_VERSION = '3.2.0';
 
     // ============================================================
     // 默认设置
@@ -94,7 +94,7 @@
     function saveSettings(p) { loadSettings(); if (p) Object.assign(SETTINGS, p); GM_setValue('rename2026_settings', JSON.stringify(SETTINGS)); }
 
     // ============================================================
-    // 常量
+    // 常量（v3.2.0 重点修改）
     // ============================================================
     const ACTRESS_ALIAS_MAP_DEFAULT = {
         '三上悠亜': '三上悠亚', 'Mikami Yua': '三上悠亚', '深田えいみ': '深田咏美', 'Fukada Eimi': '深田咏美',
@@ -161,22 +161,74 @@
     ];
 
     const GARBAGE_WORDS = [
-        'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
-        'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
-        'WATERMARK', 'RARBG', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX',
-        '1440P', '1080P', '720P', '480P', 'FULLHD', '10BIT'
+        // 分辨率
+        'FHD', 'FULLHD', 'UHD', 'QHD', 'WQHD', 'HD', 'SD', 'HDR', 'HDR10', '2160P', '1440P', '1080P', '1080I', '720P', '720I', '576P', '540P', '480P', '396P', '360P', '240P',
+        // 编码
+        'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC', 'VP9', 'AV1', '10BIT', '8BIT',
+        // 音频
+        'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'DDP',
+        // 容器
+        'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
+        // 其它
+        'WATERMARK', 'RARBG', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX', 'BDRIP', 'HDRIP', 'WEBDL'
     ];
 
+    // ★ 分辨率/帧率清理（不含 4K/8K，它们在 MARKER_MAP 中单独处理）
+    const RESOLUTION_FPS_PATTERN = /(?<![A-Za-z0-9])(?:2160[Pp]|1440[Pp]|1080[PpIi]?|720[PpIi]?|576[Pp]|540[Pp]|480[Pp]|396[Pp]|360[Pp]|240[Pp]|FHD|FULLHD|UHD|QHD|WQHD|HDR10\+?|HDR|10[Bb][Ii][Tt]|8[Bb][Ii][Tt]|(?:24|25|30|50|60|120|144)\s*[Ff][Pp][Ss]|[Ff][Pp][Ss])(?![A-Za-z0-9])/gi;
+
+    // ★ 标记识别（v3.2.0 增强：无码/破解更全面）
     const MARKER_MAP = {
-        leak: '流出', leaked: '流出', '流出': '流出',
-        uncensored: '无码', '無修正': '无码', '无码': '无码',
-        chs: '中文字幕', cht: '中文字幕', gb: '中文字幕', big5: '中文字幕', sc: '中文字幕', chinese: '中文字幕',
-        '中字': '中文字幕', '字幕': '中文字幕', '中文': '中文字幕', '中文字幕': '中文字幕',
-        '4k': '4K', '8k': '8K', '60fps': '60fps', '120fps': '120fps',
-        '破解': '破解', '2160p': '4K', vr: 'VR'
+        // === 组合优先（破解/流出的复合表述） ===
+        '无码破解': '破解', '破解无码': '破解',
+        '无码流出': '流出', '流出无码': '流出',
+
+        // === 无码（无修正相关） ===
+        '无修正': '无码', '無修正': '无码',
+        '无码': '无码', '無碼': '无码',
+        '无马赛克': '无码', '無馬賽克': '无码',
+        '去码': '无码', '去碼': '无码',
+        'uncensored': '无码', 'uncensor': '无码',
+        'decensored': '无码', 'decensor': '无码',
+        'restored': '无码', 'restoration': '无码',
+
+        // === 流出 ===
+        '流出': '流出',
+        'leaked': '流出', 'leaks': '流出', 'leak': '流出',
+
+        // === 破解 ===
+        '破解版': '破解', '破解': '破解',
+        '破壊版': '破解', '破壊': '破解',
+        'hacked': '破解', 'hack': '破解',
+        'cracked': '破解', 'crack': '破解',
+        'pierce': '破解',
+
+        // === 中文字幕 ===
+        '中文字幕版': '中文字幕', '中文字幕': '中文字幕',
+        '中字版': '中文字幕',
+        '繁体中文': '中文字幕', '简体中文': '中文字幕',
+        '繁體中文': '中文字幕', '簡體中文': '中文字幕',
+        '繁體中文字幕': '中文字幕', '簡體中文字幕': '中文字幕',
+        'chinese': '中文字幕',
+        'big5': '中文字幕',
+        'chs': '中文字幕', 'cht': '中文字幕', 'gb': '中文字幕',
+
+        // === 超高分辨率（保留） ===
+        '4k': '4K', '8k': '8K',
+        '2160p': '4K',
+
+        // === VR / 3D ===
+        'vr180': 'VR', 'vr360': 'VR', 'vr': 'VR',
+        '3d': '3D',
     };
-    const MARKER_PATTERN = /(4K|8K|60fps|120fps|破解|流出|leak(?:ed)?|無修正|无码|uncensored|中字|字幕|chinese|chs|cht|big5|gb|sc|中文字幕|2160p|VR)/gi;
-    const AD_BADGES = /\[3Q\]|\(原\)|\[BT\]|【广告】|\[廣告\]/gi;
+
+    // 动态构建 MARKER_PATTERN（长 key 优先匹配）
+    const MARKER_PATTERN = (function () {
+        const keys = Object.keys(MARKER_MAP).sort(function (a, b) { return b.length - a.length; });
+        const escaped = keys.map(function (k) { return k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+        return new RegExp('(?:' + escaped.join('|') + ')', 'gi');
+    })();
+
+    const AD_BADGES = /\[3Q\]|\(原\)|\[原\]|\[BT\]|【广告】|\[廣告\]/gi;
 
     // ============================================================
     // 工具函数
@@ -260,13 +312,18 @@
         if (/(AV女優|AV女优|新人AV|新人|中出し|中出|生中出|無修正|无码|高清|中文字幕|素人|人妻|限定|企画|シリーズ|NTR)/i.test(n)) return false;
         return true;
     };
+
+    // ★ v3.2.0：中文标记不做边界检查，英文标记前后都字母才跳过
     const removeMarkers = function (str) {
         return String(str).replace(MARKER_PATTERN, function (m, p1, offset, full) {
-            if (offset > 0 && /[a-z0-9]/i.test(full[offset - 1])) return m;
-            if (offset + m.length < full.length && /[a-z0-9]/i.test(full[offset + m.length])) return m;
+            if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(m)) return ' ';
+            const prev = offset > 0 ? full[offset - 1] : '';
+            const next = offset + m.length < full.length ? full[offset + m.length] : '';
+            if (/[a-z0-9]/i.test(prev) && /[a-z0-9]/i.test(next)) return m;
             return ' ';
         });
     };
+
     const stripDomainPrefix = function (filename) {
         if (!filename || filename.indexOf('@') === -1) return filename;
         const safeExtMatch = filename.match(/\.([a-z0-9]{2,5})$/i);
@@ -324,7 +381,7 @@
     };
 
     // ============================================================
-    // 新版 115 适配：选择器
+    // 新版 115 适配：选择器（同 v3.1.1）
     // ============================================================
     const V115_ROW_SELECTORS = ['li[rel="item"]', '.file-list-item', '.file-grid-item', '[data-file-id]'];
     const V115_ID_ATTRS_FOLDER = ['data-file-id', 'cate_id', 'cid', 'file_id', 'data-cate-id', 'data-cid'];
@@ -339,7 +396,6 @@
         }
         return '';
     }
-
     function v115IsFolderRow(row) {
         const ft = row.getAttribute('file_type');
         if (ft === '0') return true;
@@ -354,7 +410,6 @@
         }
         return false;
     }
-
     function v115GetRowName(row) {
         if (!row) return '';
         const direct = row.getAttribute('title') || row.getAttribute('data-title') || row.getAttribute('data-name');
@@ -368,7 +423,6 @@
         }
         return '';
     }
-
     function v115GetRowId(row, isFolder) {
         const attrs = isFolder ? V115_ID_ATTRS_FOLDER : V115_ID_ATTRS_FILE;
         let id = v115GetAttr(row, attrs);
@@ -382,18 +436,14 @@
         if (pk) return String(pk).trim();
         return '';
     }
-
     function v115IsRowSelected(row) {
         if (!row) return false;
-        try {
-            if (typeof row.matches === 'function' && row.matches('li.selected, .selected, .is-selected, [aria-selected="true"]')) return true;
-        } catch (e) { }
+        try { if (typeof row.matches === 'function' && row.matches('li.selected, .selected, .is-selected, [aria-selected="true"]')) return true; } catch (e) { }
         if (String(row.getAttribute('aria-selected') || '') === 'true') return true;
         const cb = row.querySelector('input[type="checkbox"]');
         if (cb && cb.checked) return true;
         return false;
     }
-
     function get115SelectedItems() {
         const results = [];
         const seen = new Set();
@@ -403,7 +453,6 @@
                 try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) { }
             });
         } catch (e) { }
-
         for (let d = 0; d < docs.length; d++) {
             const doc = docs[d];
             const allRows = new Set();
@@ -415,10 +464,7 @@
                 if (!v115IsRowSelected(row)) return;
                 let p = row.parentElement;
                 let skip = false;
-                while (p && p !== doc.body) {
-                    if (allRows.has(p)) { skip = true; break; }
-                    p = p.parentElement;
-                }
+                while (p && p !== doc.body) { if (allRows.has(p)) { skip = true; break; } p = p.parentElement; }
                 if (skip) return;
                 seen.add(row);
                 const isFolder = v115IsFolderRow(row);
@@ -431,7 +477,7 @@
     }
 
     // ============================================================
-    // 新版 115 适配：菜单注入
+    // 菜单（同 v3.1.1，样式已统一）
     // ============================================================
     const MENU_MODERN_ANCHOR_SEL = 'button[data-menu-action="move"], button[data-menu-action="open"], button[data-menu-action="rename"], button[data-menu-action="copy"]';
     const MENU_LEGACY_ANCHOR_SEL = "li[val='open_dir'], li[data-val='open_dir'], li[menu='open_dir']";
@@ -447,7 +493,6 @@
         } catch (e) { }
         return null;
     }
-
     function handleMenuAction(actionId) {
         if (actionId === 'local_code_process') rename(local_rename);
         else if (actionId === 'rename_all_multi_date') { saveSettings({ translateChinese: false }); rename(rename_multi); }
@@ -458,8 +503,6 @@
         else if (actionId === 'get_javdb_rating') getJavdbRating();
         else if (actionId === 'backup_file_names') backupFileNames();
     }
-
-    // 现代版菜单图标（20x20，路径与官方风格一致）
     const MODERN_MENU_ICONS = {
         local_code_process: 'M4 2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v12h12V4H4zm2 2h2v2H6V6zm0 4h2v2H6v-2zm4-4h4v2h-4V6zm0 4h4v2h-4v-2z',
         rename_all_multi_date: 'M15 2v2h-2v12h2v2H9v-2h2V4H9V2zm1 3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v-2h2V7h-2V5zm-6 0v2H4v6h6v2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 4v2H5V9z',
@@ -470,7 +513,6 @@
         get_javdb_rating: 'm10 2.5 2.163 4.383 4.837.703-3.5 3.412.826 4.816L10 13.538l-4.326 2.276.826-4.816L3 7.586l4.837-.703L10 2.5zm0 4.106-1.175 2.38-2.627.382 1.901 1.853-.449 2.617L10 12.604l2.35 1.234-.449-2.617 1.901-1.853-2.627-.382L10 6.606z',
         backup_file_names: 'M13 5.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h9zm0 2H4v8h9v-8zm3-5a2 2 0 0 1 2 2v9h-2v-9H6v-2h10z',
     };
-
     function injectMenu() {
         if (document.getElementById('rename_list') || document.getElementById('rename_list_modern')) return true;
         const info = findMenuAnchor();
@@ -478,7 +520,6 @@
         const s = loadSettings();
         const visible = MENU_ITEMS.filter(function (it) { return s.menuVisibility[it.key] !== false; });
         if (!visible.length) return true;
-
         if (info.type === 'modern') {
             const wrap = document.createElement('div');
             wrap.id = 'rename_list_modern';
@@ -494,11 +535,7 @@
                     ? '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" class="" style="flex-shrink:0;"><g fill="none" fill-rule="evenodd"><path d="M0 0h20v20H0z"></path><path fill="var(--dark-only-file-menu-icon, #4a5568)" fill-rule="nonzero" d="' + iconPath + '"></path></g></svg>'
                     : '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" class="" style="flex-shrink:0;"><g fill="none" fill-rule="evenodd"><path d="M0 0h20v20H0z"></path><circle cx="10" cy="10" r="2.5" fill="var(--dark-only-file-menu-icon, #4a5568)"></circle></g></svg>';
                 btn.innerHTML = svg + '<span style="font-size: 12px; font-weight: 500;">' + escapeHtml(it.label) + '</span>';
-                btn.addEventListener('click', function (e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleMenuAction(it.id);
-                });
+                btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); handleMenuAction(it.id); });
                 wrap.appendChild(btn);
             });
             info.anchor.insertAdjacentElement('afterend', wrap);
@@ -507,58 +544,58 @@
             li.id = 'rename_list';
             visible.forEach(function (it) {
                 const a = document.createElement('a');
-                a.id = it.id;
-                a.className = 'mark';
-                a.href = 'javascript:;';
-                a.textContent = it.label;
-                a.addEventListener('click', function (e) {
-                    e.preventDefault();
-                    handleMenuAction(it.id);
-                });
+                a.id = it.id; a.className = 'mark'; a.href = 'javascript:;'; a.textContent = it.label;
+                a.addEventListener('click', function (e) { e.preventDefault(); handleMenuAction(it.id); });
                 li.appendChild(a);
             });
             info.anchor.insertAdjacentElement('beforebegin', li);
         }
         return true;
     }
-
-    let menuInterval = setInterval(function () {
-        injectMenu();
-    }, 800);
+    let menuInterval = setInterval(function () { injectMenu(); }, 800);
 
     // ============================================================
-    // 番号提取（参考 JAV 老司机 extractCode 逻辑）
+    // 番号提取
     // ============================================================
+    // ★ v3.2.0：分段数字严格 1-20，后不能跟字母数字
     function extractFC2Part(str, fc2Num) {
         const s = String(str || '');
         const prefix = '(?:fc2?[-_\\s]*(?:ppv[-_\\s]*)?|ppv[-_\\s]*)0*' + fc2Num;
-        let m = s.match(new RegExp(prefix + '[-_.\\s\\[\\](){}]*sp[-_.\\s]*0*(\\d{0,3})(?=$|[^0-9])', 'i'));
-        if (m) return m[1] ? 'sp' + m[1] : 'sp';
-        m = s.match(new RegExp(prefix + '[-_.\\s\\[\\](){}]*(?:cd|part|pt|disc|vol|volume|ep)[-_.\\s]*0*(\\d{1,3}|[ab])(?=$|[^A-Za-z0-9])', 'i'));
-        if (m) return m[1];
-        m = s.match(new RegExp(prefix + '[-_.\\s\\[\\](){}]+0*(\\d{1,3})(?=$|[^0-9])', 'i'));
-        if (m) { const v = parseInt(m[1], 10); if (v >= 1 && v <= 999) return String(v); }
+        let m = s.match(new RegExp(prefix + '[-_.\\s\\[\\](){}]*sp[-_.\\s]*0*(\\d{0,3})(?=$|[^0-9A-Za-z])', 'i'));
+        if (m) {
+            if (m[1]) { const v = parseInt(m[1], 10); return (v >= 1 && v <= 20) ? 'sp' + v : 'sp'; }
+            return 'sp';
+        }
+        m = s.match(new RegExp(prefix + '[-_.\\s\\[\\](){}]*(?:cd|part|pt|disc|vol|volume|ep)[-_.\\s]*0*(\\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])', 'i'));
+        if (m) {
+            if (/^\d+$/.test(m[1])) { const n = parseInt(m[1], 10); return (n >= 1 && n <= 20) ? String(n) : ''; }
+            return m[1].toUpperCase();
+        }
+        m = s.match(new RegExp(prefix + '[-_.\\s\\[\\](){}]+0*(\\d{1,2})(?=$|[^0-9A-Za-z])', 'i'));
+        if (m) { const v = parseInt(m[1], 10); return (v >= 1 && v <= 20) ? String(v) : ''; }
         m = s.match(new RegExp(prefix + '[-_.\\s]*([a-d])(?=$|[^a-z0-9])', 'i'));
         if (m) return m[1].toUpperCase();
         return '';
     }
-
+    // ★ v3.2.0：同 extractFC2Part，数字 1-20，后不能跟字母数字
     function extractPart(str, code) {
         const s = String(str || '');
         const c = String(code || '');
         if (!c) return '';
         const codePattern = c.replace(/-/g, '[-_\\s.]?');
-        let m = s.match(new RegExp(codePattern + '[-_.\\s\\[\\](){}]*(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\\s]*0*(\\d{1,3}|[a-d])(?=$|[^A-Za-z0-9])', 'i'));
-        if (m) { const v = m[1]; if (/^\d+$/.test(v)) return String(parseInt(v, 10)); return v.toUpperCase(); }
-        m = s.match(new RegExp(codePattern + '[-_.\\s\\[\\](){}]+0*(\\d{1,3})(?=$|[^0-9])', 'i'));
-        if (m) { const v = parseInt(m[1], 10); if (v >= 1 && v <= 999) return String(v); }
+        let m = s.match(new RegExp(codePattern + '[-_.\\s\\[\\](){}]*(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\\s]*0*(\\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])', 'i'));
+        if (m) {
+            if (/^\d+$/.test(m[1])) { const n = parseInt(m[1], 10); return (n >= 1 && n <= 20) ? String(n) : ''; }
+            return m[1].toUpperCase();
+        }
+        m = s.match(new RegExp(codePattern + '[-_.\\s\\[\\](){}]+0*(\\d{1,2})(?=$|[^0-9A-Za-z])', 'i'));
+        if (m) { const v = parseInt(m[1], 10); return (v >= 1 && v <= 20) ? String(v) : ''; }
         m = s.match(new RegExp(codePattern + '[-_.\\s\\[\\](){}]+([a-d])(?=$|[^a-z0-9])', 'i'));
         if (m) return m[1].toUpperCase();
-        m = s.match(/(?:^|[^A-Za-z0-9])(?:cd|part|pt|disc|vol|volume|ep)[-_.\s\[\](){}]*0*(\d{1,3})(?=$|[^0-9])/i);
-        if (m) { const v = parseInt(m[1], 10); if (v >= 1 && v <= 999) return String(v); }
+        m = s.match(/(?:^|[^A-Za-z0-9])(?:cd|part|pt|disc|vol|volume|ep)[-_.\s\[\](){}]*0*(\d{1,2})(?=$|[^0-9A-Za-z])/i);
+        if (m) { const v = parseInt(m[1], 10); return (v >= 1 && v <= 20) ? String(v) : ''; }
         return '';
     }
-
     function extractJavCode(rawStr) {
         if (!rawStr) return null;
         let s = String(rawStr);
@@ -567,19 +604,14 @@
 
         let m = s.match(/\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})\b/i);
         if (m) return { code: 'FC2-PPV-' + m[1], type: 'fc2', fc2Num: m[1] };
-
         m = s.match(/\bHEYDOUGA[-_\s]*(\d{4})[-_\s]+([A-Z0-9]+)\b/i);
         if (m) return { code: 'HEYDOUGA-' + m[1] + '-' + m[2], type: 'heydouga' };
-
         m = s.match(/\bGACHI[-_\s]*(\d{3,6})\b/i);
         if (m) return { code: 'GACHI-' + m[1], type: 'gachi' };
-
         m = s.match(/\bDUGA[-_\s]+([A-Z0-9]+[-_][A-Z0-9]+)\b/i);
         if (m) return { code: 'DUGA-' + m[1].replace(/_/g, '-'), type: 'duga' };
-
         m = s.match(/\bMY[-_\s]?WIFE[-_\s]*(\d+)\b/i);
         if (m) return { code: 'MYWIFE-' + m[1], type: 'mywife' };
-
         m = s.match(/\bTOKYO[-_\s]?HOT[-_\s]*([A-Z0-9]+(?:[-_][A-Z0-9]+)?)\b/i);
         if (m) return { code: 'Tokyo-Hot-' + m[1], type: 'tokyo-hot' };
 
@@ -604,10 +636,8 @@
 
         m = s.match(/\b([A-Z]{2,10})(\d{3,6})\b/i);
         if (m && garbage.indexOf(m[1].toUpperCase()) === -1) return { code: m[1].toUpperCase() + '-' + m[2], type: 'compact' };
-
         return null;
     }
-
     const CODE_PREFIXES = (function () {
         const prefixes = MANUAL_PREFIXES.slice();
         const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -622,11 +652,9 @@
         prefixes.sort(function (a, b) { return b.length - a.length; });
         return prefixes;
     })();
-
     const CODE_PREFIX_PATTERNS = CODE_PREFIXES.map(function (p) {
         return { prefix: p, regex: new RegExp('\\b' + p + '[-_ ]?0*(\\d{1,5})(?![0-9])', 'i') };
     });
-
     function matchCodeByPrefix(str) {
         if (!str) return null;
         for (let i = 0; i < CODE_PREFIX_PATTERNS.length; i++) {
@@ -642,13 +670,11 @@
         }
         return null;
     }
-
     function checkUncensored(baseCode, raw) {
         if (/无码|無修正|uncensored/i.test(raw)) return true;
         if (/^Tokyo-Hot-/i.test(baseCode) || /^1PONDO-/i.test(baseCode) || /^CARIB-/i.test(baseCode) || /^HEYZO-/i.test(baseCode) || /^10MU-/i.test(baseCode) || /^MURA-/i.test(baseCode) || /^H4610-/i.test(baseCode) || /^NAMA-/i.test(baseCode) || /_/.test(baseCode)) return true;
         return false;
     }
-
     function removeCodeFromTitle(str, baseCode) {
         if (!baseCode) return str;
         let s = String(str);
@@ -670,7 +696,7 @@
     }
 
     // ============================================================
-    // 核心解析
+    // 核心解析（v3.2.0：title 清理增强）
     // ============================================================
     const parseVideoInfo = function (origTitle, safeSuffix) {
         try {
@@ -681,10 +707,13 @@
 
             const markers = [];
             rawForCode.replace(MARKER_PATTERN, function (m, p1, offset, full) {
-                const lower = m.toLowerCase();
-                if (offset > 0 && /[a-z0-9]/i.test(full[offset - 1])) return m;
-                if (offset + m.length < full.length && /[a-z0-9]/i.test(full[offset + m.length])) return m;
-                const nm = MARKER_MAP[lower];
+                // 中文不做边界检查
+                if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(m)) {
+                    const prev = offset > 0 ? full[offset - 1] : '';
+                    const next = offset + m.length < full.length ? full[offset + m.length] : '';
+                    if (/[a-z0-9]/i.test(prev) && /[a-z0-9]/i.test(next)) return m;
+                }
+                const nm = MARKER_MAP[m.toLowerCase()];
                 if (nm && markers.indexOf(nm) === -1) markers.push(nm);
                 return m;
             });
@@ -706,7 +735,6 @@
             if (extracted) {
                 queryCode = extracted.code;
                 displayCode = extracted.code;
-
                 if (extracted.type === 'fc2') {
                     part = extractFC2Part(rawForCode, extracted.fc2Num);
                     const cleanup = new RegExp('(?:fc2?[-_\\s]*(?:ppv[-_\\s]*)?|ppv[-_\\s]*)0*' + extracted.fc2Num + '(?:[-_.\\s\\[\\](){}]*(?:sp[-_.\\s]*0*\\d{0,3}|cd[-_.\\s]*0*\\d{1,3}|part[-_.\\s]*0*\\d{1,3}|\\d{1,3}|[a-d]))?', 'i');
@@ -765,14 +793,19 @@
             }
             const fullCode = finalPart ? baseCode + '-' + finalPart : baseCode;
 
+            // ★ v3.2.0：title 清理全链路
             const garbageRegex = new RegExp('\\b(' + GARBAGE_WORDS.join('|') + ')\\b', 'gi');
-            let cleanTitle = removeMarkers(rawForCode);
-            cleanTitle = cleanTitle.replace(garbageRegex, ' ');
-            cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
-            cleanTitle = cleanTitle.replace(AD_BADGES, ' ');
-            cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim();
-            cleanTitle = removeCodeFromTitle(cleanTitle, baseCode);
-            if (isPunctOnly(cleanTitle)) cleanTitle = '';
+            let cleanTitle = removeMarkers(rawForCode);                    // 1. 删标记
+            cleanTitle = cleanTitle.replace(RESOLUTION_FPS_PATTERN, ' ');  // 2. 删分辨率/帧率
+            cleanTitle = cleanTitle.replace(garbageRegex, ' ');            // 3. 删编码/容器
+            cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' '); // 4. 删方括号
+            cleanTitle = cleanTitle.replace(AD_BADGES, ' ');               // 5. 删广告
+            cleanTitle = cleanTitle.replace(/(?:^|[\s_\-\.])(?:cd|part|pt|disc|vol|volume|ep|sp)(?=$|[\s_\-\.])/gi, ' '); // 6. 删孤立 part
+            cleanTitle = cleanTitle.replace(/[_\.]+/g, ' ');               // 7. 下划线/点→空格（保留短横线）
+            cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim();           // 8. 空白压缩
+            cleanTitle = removeCodeFromTitle(cleanTitle, baseCode);        // 9. 删番号
+            cleanTitle = cleanTitle.replace(/^[\s_\-\.]+|[\s_\-\.]+$/g, '').trim(); // 10. 首尾标点
+            if (isPunctOnly(cleanTitle)) cleanTitle = '';                  // 11. 纯标点判断
 
             return { queryCode: queryCode, baseCode: baseCode, fullCode: fullCode, markers: markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
@@ -852,7 +885,6 @@
         if (/^(?:hhd800\.com@|www\.98t\.la@)/i.test(String(fileName))) return true;
         return false;
     };
-
     const hasManualNamePayload = function (fileName, code) {
         if (!loadSettings().protectManualName) return false;
         if (!fileName || !code) return false;
@@ -927,7 +959,6 @@
         const next = function () { if (i >= v.length) return onFail && onFail(v.join('/')); const q = v[i++]; onQuery(q, next); };
         next();
     }
-
     function fetchJavlib(code) {
         return new Promise(function (resolve, reject) {
             trySearchVariants(code, function (q, next) {
@@ -958,7 +989,6 @@
             }, function () { reject(new Error('JavLibrary 无结果')); });
         });
     }
-
     function fetchJavbus(code) {
         return new Promise(function (resolve, reject) {
             const variants = getCodeQueryVariants(code).filter(function (v) { return !/[\s_]/.test(v); });
@@ -994,7 +1024,6 @@
             tryOne(variants[0]);
         });
     }
-
     function fetchXslist(code) {
         return new Promise(function (resolve, reject) {
             trySearchVariants(code, function (q, next) {
@@ -1033,7 +1062,6 @@
             }, function () { reject(new Error('xslist 无结果')); });
         });
     }
-
     function fetchJavdb(code) {
         return new Promise(function (resolve, reject) {
             trySearchVariants(code, function (q, next) {
@@ -1074,7 +1102,6 @@
             }, function () { reject(new Error('JavDB 无结果')); });
         });
     }
-
     function fetchFC2PPVDB(code) {
         const num = code.match(/\d+$/)[0];
         return gmRequest({ method: 'GET', url: fc2ppvdbBase + num, anonymous: true, timeout: 15000 }).then(function (res) {
@@ -1087,7 +1114,6 @@
             return { title: title, date: '', actresses: [] };
         });
     }
-
     function fetchMissavFC2(code) {
         const expectedId = code.toLowerCase();
         return new Promise(function (resolve, reject) {
@@ -1126,7 +1152,6 @@
             }).then(resolve).catch(reject);
         });
     }
-
     function fetchAvsox(code) {
         return gmRequest({ method: 'GET', url: 'https://avsox.host/cn/search/' + encodeURIComponent(code), anonymous: true, timeout: 15000 }).then(function (res) {
             const doc = parseHTML(res.responseText);
@@ -1143,7 +1168,6 @@
             return { title: title, date: date, actresses: actresses, uncensored: true };
         });
     }
-
     function fetchAvmoo(code) {
         return gmRequest({ method: 'GET', url: 'https://avmoo.host/cn/search/' + encodeURIComponent(code), anonymous: true, timeout: 15000 }).then(function (res) {
             const doc = parseHTML(res.responseText);
@@ -1159,12 +1183,10 @@
             return { title: title, date: date, actresses: actresses, uncensored: true };
         });
     }
-
     const SOURCE_REGISTRY = {
         javdb: fetchJavdb, javbus: fetchJavbus, javlibrary: fetchJavlib, xslist: fetchXslist,
         fc2ppvdb: fetchFC2PPVDB, missav: fetchMissavFC2, avsox: fetchAvsox, avmoo: fetchAvmoo
     };
-
     function fetchRemoteInfo(code, isUncensored) {
         const key = code.toUpperCase();
         if (isInfoCacheValid(key)) return Promise.resolve(infoCache[key]);
@@ -1244,7 +1266,6 @@
             return null;
         } catch (e) { return null; }
     }
-
     async function buildNameFromInfo(vInfo, info, suffix) {
         const s = loadSettings();
         if (info && info.uncensored && vInfo.markers && vInfo.markers.indexOf('无码') === -1) vInfo.markers.push('无码');
@@ -1255,7 +1276,6 @@
         }
         return buildNewName(vInfo, Object.assign({}, info, { zhTitle: zhTitle }), suffix);
     }
-
     window.rename_multi = function (fid, vInfo, suffix, callback, origFilename) {
         getTargetName(vInfo, suffix).then(function (newName) {
             if (newName) send_115(fid, newName, vInfo.fullCode, origFilename, callback);
@@ -1266,7 +1286,6 @@
             }
         }).catch(function () { if (typeof callback === 'function') callback(); });
     };
-
     function local_rename(fid, vInfo, suffix, callback, origFilename) {
         const info = { title: vInfo.localTitle, date: vInfo.date, actresses: [] };
         const newName = buildNewName(vInfo, info, suffix);
@@ -1283,7 +1302,6 @@
     // 发送请求
     // ============================================================
     let renameCompareList = [];
-
     function send_115(id, name, fh, origFilename, callback) {
         const fn = sanitizeFileName(name);
         fetch('https://webapi.115.com/files/edit', {
@@ -1305,7 +1323,6 @@
     // 进度与通知
     // ============================================================
     window.renameInProgress = false;
-
     function runTasksWithLimit(tasks, limit, intervalMs, doneAll) {
         if (!tasks.length) { doneAll && doneAll(); return; }
         let idx = 0, running = 0, done = false;
@@ -1321,7 +1338,6 @@
         };
         next();
     }
-
     window.progressBox = {
         init: function (title, total) {
             this.total = total || 0; this.current = 0; this.title = title; this.paused = false;
@@ -1349,12 +1365,10 @@
         },
         finish: function () { this.paused = false; this.update(this.total); const b = document.getElementById('task-progress-box'); if (b) setTimeout(function () { b.style.display = 'none'; }, 800); }
     };
-
     const toastQueue = [];
     let toastActive = 0;
     const TOAST_MAX = 3;
     const flushToast = function () { if (toastQueue.length && toastActive < TOAST_MAX) toastQueue.shift()(); };
-
     window.showPageNotification = function (msg, type, duration) {
         if (type == null) type = 'info';
         if (!duration) duration = type === 'error' ? 5000 : 3000;
@@ -1473,31 +1487,25 @@
         const conc = Math.min(3, missing.length);
         for (let i = 0; i < conc; i++) prefetch();
     }
-
     function persistCaches() {
         setCache('jb_infoCache', infoCache);
         setCache('jb_actressCache', actressCache);
         setCache('jb_ratingCache', ratingCache);
         setCache('jb_negativeCache', negativeCache);
     }
-
     function rename(call) {
         if (window.renameInProgress) { showPageNotification('已有任务进行中', 'info', 2000); return; }
         window.renameInProgress = true;
         const s = loadSettings();
-
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择文件或文件夹', 'info', 3000); window.renameInProgress = false; return; }
-
         const parsedItems = [];
         selected.forEach(function (item) {
             const safeSuffix = getSafeSuffix(item.fn);
             const vi = parseVideoInfo(item.fn, safeSuffix);
             if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, safeSuffix: safeSuffix, vi: vi });
         });
-
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); window.renameInProgress = false; return; }
-
         const isLocal = (call === local_rename);
         let finished = false;
         const finishRename = function () {
@@ -1510,7 +1518,6 @@
             window.renameInProgress = false;
         };
         const cancelRename = function () { persistCaches(); showPageNotification('已取消', 'info', 2000); window.renameInProgress = false; };
-
         const execRename = function (rows) {
             if (!rows.length) { cancelRename(); return; }
             progressBox.init(isLocal ? '本地番号加工' : '联网改名', rows.length);
@@ -1528,7 +1535,6 @@
             const conc = isLocal ? Math.max(3, s.renameConcurrency) : s.renameConcurrency;
             runTasksWithLimit(tasks, conc, 200, finishRename);
         };
-
         if (isLocal) buildPreviewRows(parsedItems, true, function (rows) { showRenamePreview(rows, execRename, cancelRename); });
         else {
             showPageNotification('正在联网生成预览...', 'info', 4000);
@@ -1595,7 +1601,6 @@
             .then(function (d) { const id = d.id || d.cid || d.file_id; return id ? String(id) : null; })
             .catch(function () { return null; });
     }
-
     function createFolderApi(pid, name) {
         return fetch('https://webapi.115.com/files/add', {
             method: 'POST', credentials: 'include',
@@ -1607,7 +1612,6 @@
             throw new Error(d.error || '创建失败');
         });
     }
-
     async function resolveArchiveRootByPath(path) {
         path = String(path || '').trim().replace(/^\/+|\/+$/g, '');
         if (!path) return { cid: null, name: null, path: '' };
@@ -1624,17 +1628,14 @@
         }
         return { cid: String(parentCid), name: parts[parts.length - 1] || '', path: path };
     }
-
     function getSeriesFromCode(code) {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
         if (/^FC2-PPV/.test(c) || /^\d{6}_\d{3}$/.test(c) || /^1PONDO[-_]/.test(c) || /^CARIB[-_]/.test(c)) return null;
         const m = c.match(/^([A-Z]+)-\d+/);
         return m ? m[1] : null;
     }
-
     const folderCidCache = {};
     const ROOT_DIR_CID = '0';
-
     function findOrCreateFolderAndMove(fid, folderName, ok, fail) {
         const cid = archiveRootCid || ROOT_DIR_CID;
         const cleanName = String(folderName || '').replace(/[\\/:*?"<>|]/g, ' ');
@@ -1655,7 +1656,6 @@
                 });
             }).catch(function () { showPageNotification('搜索/创建文件夹失败', 'error', 3000); if (typeof fail === 'function') fail('net'); });
     }
-
     function moveFileToFolder(fid, targetCid, folderName, ok, fail) {
         fetch('https://webapi.115.com/files/move', {
             method: 'POST', credentials: 'include',
@@ -1666,12 +1666,10 @@
             else { showPageNotification('归档失败: ' + (d.error || ''), 'error', 5000); if (typeof fail === 'function') fail(d.error); }
         }).catch(function () { showPageNotification('移动请求失败', 'error', 5000); if (typeof fail === 'function') fail('net'); });
     }
-
     function archiveToActorFolder() {
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择', 'info', 3000); return; }
         if (!archiveRootCid) { showPageNotification('请先设置归档根目录', 'error', 5000); return; }
-
         const parsedItems = [];
         selected.forEach(function (item) {
             const ss = getSafeSuffix(item.fn);
@@ -1679,14 +1677,12 @@
             if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, vi: vi });
         });
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); return; }
-
         const codes = Array.from(new Set(parsedItems.map(function (i) { return i.vi.queryCode.toUpperCase(); })));
         const missing = codes.filter(function (c) {
             if (actressCache[c] && actressCache[c].length) return false;
             if (isInfoCacheValid(c) && infoCache[c].actresses && infoCache[c].actresses.length) { actressCache[c] = infoCache[c].actresses; return false; }
             return true;
         });
-
         const start = function () {
             const s = loadSettings();
             progressBox.init('归档', parsedItems.length);
@@ -1716,7 +1712,6 @@
                 persistCaches();
             });
         };
-
         if (missing.length) {
             progressBox.init('预取演员信息', missing.length);
             let i = 0;
@@ -1735,7 +1730,6 @@
             for (let j = 0; j < conc; j++) next();
         } else start();
     }
-
     function getBucketFolderName(code) {
         const c = String(code).toUpperCase();
         if (/^FC2-PPV/.test(c)) return 'FC2';
@@ -1747,12 +1741,10 @@
         }
         return '其他';
     }
-
     function archiveToBucketFolder() {
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择', 'info', 3000); return; }
         if (!archiveRootCid) { showPageNotification('请先设置归档根目录', 'error', 5000); return; }
-
         const parsedItems = [];
         selected.forEach(function (item) {
             const ss = getSafeSuffix(item.fn);
@@ -1760,7 +1752,6 @@
             if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, vi: vi });
         });
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); return; }
-
         const s = loadSettings();
         progressBox.init('分桶归档', parsedItems.length);
         let processed = 0, success = 0;
@@ -1813,7 +1804,6 @@
             });
         });
     }
-
     function update115Rating(fid, star, fh, fname, callback) {
         star = Math.max(1, Math.min(5, star));
         const finish = function (ok) { showPageNotification('"' + fh + '"评分' + (ok ? '更新为 ' + star + ' 星' : '失败'), ok ? 'success' : 'error', 2000); callback(ok); };
@@ -1824,7 +1814,6 @@
         }).then(function (r) { return r.json(); }).then(function (r) { if (r && r.state) finish(true); else finish(false); })
             .catch(function () { finish(false); });
     }
-
     function getJavdbRating() {
         const selected = get115SelectedItems();
         if (!selected.length) { showPageNotification('请先选择', 'info', 3000); return; }
@@ -1835,10 +1824,8 @@
             if (vi && vi.queryCode) parsedItems.push({ fid: item.fid, fn: item.fn, vi: vi });
         });
         if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); return; }
-
         const codes = Array.from(new Set(parsedItems.map(function (i) { return i.vi.queryCode.toUpperCase(); })));
         const missing = codes.filter(function (c) { return !ratingCache[c]; });
-
         const start = function () {
             progressBox.init('更新评分', parsedItems.length);
             let processed = 0, success = 0;
@@ -1859,7 +1846,6 @@
                 setCache('jb_ratingCache', ratingCache);
             });
         };
-
         if (missing.length) {
             progressBox.init('获取评分', missing.length);
             let i = 0;
@@ -1887,7 +1873,6 @@
         const allSrc = ['javdb', 'javbus', 'javlibrary', 'xslist', 'fc2ppvdb', 'missav', 'avsox', 'avmoo'];
         const srcLabels = { javdb: 'JavDB', javbus: 'JavBus', javlibrary: 'JavLibrary', xslist: 'Xslist', fc2ppvdb: 'FC2PPVDB', missav: 'MissAV', avsox: 'Avsox', avmoo: 'AVMoo' };
         const mv = s.menuVisibility || {};
-
         const renderField = function () {
             return orderArr.map(function (key, i) {
                 const def = FIELD_DEFINITIONS[key]; if (!def) return '';
@@ -1904,7 +1889,6 @@
                     '</div>';
             }).join('');
         };
-
         const overlay = document.createElement('div');
         overlay.id = 'rename2026-settings';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999999;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
@@ -1951,7 +1935,6 @@
             '</div>' +
             '</div>';
         document.body.appendChild(overlay);
-
         const refresh = function () { overlay.querySelector('#rs-field-list').innerHTML = renderField(); bind(); };
         function bind() {
             overlay.querySelectorAll('[data-field-up]').forEach(function (b) {
@@ -1962,7 +1945,6 @@
             });
         }
         bind();
-
         overlay.querySelector('#rs-close').onclick = function () { overlay.remove(); };
         overlay.querySelector('#rs-cancel').onclick = function () { overlay.remove(); };
         overlay.querySelector('#rs-archive-apply').onclick = async function () {
@@ -2044,7 +2026,6 @@
     }
     setTimeout(showRootInfo, 2000);
 
-    // 样式
     GM_addStyle(
         '[id^="archive-root-info"] { position:fixed;top:20px;right:20px;max-width:320px;background:rgba(0,0,0,.8);color:#fff;padding:12px 20px;border-radius:4px;z-index:9998;font-size:14px;border-left:4px solid #1890ff;word-break:break-all; }' +
         '.custom-notification{position:fixed;top:80px;right:20px;max-width:300px;background:rgba(0,0,0,.8);color:#fff;padding:12px 20px;border-radius:4px;z-index:9999;font-size:14px;transition:all .3s;opacity:0;transform:translateY(-10px);}' +
@@ -2057,7 +2038,6 @@
         '#task-progress-box .tp-text{margin-top:4px;text-align:right;font-size:11px;opacity:.9;}'
     );
 
-    // 设置归档根（右键）
     function setArchiveRoot() {
         const selected = get115SelectedItems();
         if (selected.length !== 1) { showPageNotification('请只选择一个文件夹', 'error', 3000); return; }
@@ -2071,14 +2051,11 @@
         showPageNotification('归档根目录：' + item.fn, 'success', 5000);
     }
 
-    // ============================================================
-    // GM 菜单
-    // ============================================================
     try {
         GM_registerMenuCommand('⚙️ 115Rename 设置', openSettingsPanel);
         GM_registerMenuCommand('📋 备份文件名', backupFileNames);
         GM_registerMenuCommand('ℹ️ 版本 v' + SCRIPT_VERSION, function () { showPageNotification('115Rename2026 v' + SCRIPT_VERSION, 'info', 3000); });
     } catch (e) { }
 
-    console.log('115Rename2026 v' + SCRIPT_VERSION + ' 已加载（新版 115 适配 + 菜单样式统一）');
+    console.log('115Rename2026 v' + SCRIPT_VERSION + ' 已加载（分辨率清理 + 无码/破解识别增强）');
 })();
