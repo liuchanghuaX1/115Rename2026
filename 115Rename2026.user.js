@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         2.3.1
-// @description     深度优化版：修复@分隔番号丢失｜常量拆分｜并发控制｜模板函数｜完整功能（FC2变体、无码标记、性别优先、冷门番号）
+// @version         2.3.4
+// @description     深度优化版：全面修复FC2番号及分段残留bug｜常量拆分｜并发控制
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -43,10 +43,8 @@
     'use strict';
 
     // ========================================================================
-    // 1. 常量与映射（可独立维护）
+    // 1. 常量与映射
     // ========================================================================
-
-    /** 女优别名映射表 */
     const ACTRESS_ALIAS_MAP = {
         '三上悠亜': '三上悠亚', 'Mikami Yua': '三上悠亚',
         '深田えいみ': '深田咏美', 'Fukada Eimi': '深田咏美',
@@ -106,7 +104,6 @@
         'Rio': 'Rio', 'Momo': 'Momo',
     };
 
-    /** 番号前缀库（手动维护长前缀，后续自动生成双字母和单字母） */
     const MANUAL_PREFIXES = [
         'LEGSJAPAN', 'AYAKISAKI', 'SPERMMANIA', 'FELLATIOJAPAN',
         'S2MCR', 'MXVR', 'SIVR',
@@ -152,7 +149,6 @@
         'STZY', 'KIDM', 'ACHJ'
     ];
 
-    /** 垃圾词列表（用于过滤文件命名中的无用字符串） */
     const GARBAGE_WORDS = [
         'WWW', 'FHD', 'HD', 'SD', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC',
         'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
@@ -160,7 +156,6 @@
         '1440P', '1080P', '720P', '480P'
     ];
 
-    /** 标记关键词及转换映射 */
     const MARKER_MAP = {
         leak: '流出', leaked: '流出', 流出: '流出',
         uncensored: '无码', 無修正: '无码', 无码: '无码',
@@ -173,20 +168,16 @@
     const AD_BADGES = /\[3Q\]|\(原\)|\[BT\]|【广告】|\[廣告\]/gi;
 
     // ========================================================================
-    // 2. 工具函数（纯函数，无副作用）
+    // 2. 工具函数
     // ========================================================================
-
-    /** 去除文件扩展名 */
     const stripFileExt = (name) => {
         const s = String(name || '');
         const idx = s.lastIndexOf('.');
         return idx > 0 ? s.slice(0, idx) : s;
     };
 
-    /** 正则转义 */
     const escapeRegExp = (str) => String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    /** 分段序号规范化（001 → 1） */
     const normalizePartToken = (p) => {
         const s = String(p == null ? '' : p);
         if (/^\d+$/.test(s)) {
@@ -196,7 +187,6 @@
         return s;
     };
 
-    /** 115文件名规范化（NFKC、去零宽、标点统一、非法字符转空格） */
     const normalize115Name = (n) => {
         if (!n) return '';
         let s = String(n);
@@ -214,7 +204,6 @@
         return s.replace(/\s+/g, ' ').trim();
     };
 
-    /** 文件夹名称标准化（半角全角转换） */
     const normalizeFolderName = (name) => {
         if (!name) return '';
         let s = normalize115Name(String(name));
@@ -236,7 +225,6 @@
         return s.replace(/\s+/g, ' ').trim();
     };
 
-    /** 生成用于去重的折叠键（忽略大小写、分隔符、括号） */
     const folderNameKey = (n) => {
         if (!n) return '';
         return normalize115Name(n)
@@ -245,7 +233,6 @@
             .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]/g, '');
     };
 
-    /** 番号查询变体（去横杠、去补零等） */
     const getCodeQueryVariants = (code) => {
         const variants = [String(code || '')];
         const noDash = String(code || '').replace(/-/g, '');
@@ -260,7 +247,6 @@
         return [...new Set(variants)];
     };
 
-    /** 获取标准女优名（查别名表） */
     const getStandardActressName = (name) => {
         if (!name) return name;
         const n = normalizeFolderName(String(name));
@@ -268,7 +254,6 @@
         return ACTRESS_ALIAS_MAP[n] || n;
     };
 
-    /** 女优名合理性校验（避免标题词混入） */
     const isPlausibleActressToken = (name) => {
         if (!name) return false;
         let n = normalizeFolderName(String(name));
@@ -284,7 +269,6 @@
         return true;
     };
 
-    /** 移除标记关键词（用于标题清理） */
     const removeMarkers = (str) => {
         return str.replace(MARKER_PATTERN, (match, p1, offset, full) => {
             const lower = match.toLowerCase();
@@ -294,15 +278,9 @@
         });
     };
 
-    /**
-     * 智能剥除域名前缀/广告后缀
-     * 修复 SSIS-971.[4K]@RUNBKK 类番号丢失问题：
-     * 不再无脑取 @ 后面，而是智能判断哪一段包含番号，保留含番号的一段。
-     */
     const stripDomainPrefix = (filename) => {
         if (!filename || !filename.includes('@')) return filename;
 
-        // 尝试识别安全扩展名（排除纯数字，如 .972 不应视为扩展名）
         const safeExtMatch = filename.match(/\.([a-z0-9]{2,5})$/i);
         const ext = (safeExtMatch && !/^\d+$/.test(safeExtMatch[1])) ? safeExtMatch[0] : '';
         const base = ext ? filename.slice(0, -ext.length) : filename;
@@ -310,31 +288,23 @@
         const parts = base.split('@').map(p => p.trim()).filter(p => p.length > 0);
         if (parts.length <= 1) return filename;
 
-        // 判断是否像域名（带 TLD，但排除视频/图片扩展名）
         const isDomain = (s) => {
             if (!s) return false;
             if (/\.(mp4|mkv|avi|wmv|mov|flv|rmvb|webm|ts|m4v|mpg|mpeg|jpg|jpeg|png|gif|webp|bmp|iso|wav|mp3|flac|aac|srt|ass|sub)$/i.test(s)) return false;
             return /^(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\.[a-z]{2,})?$/i.test(s);
         };
 
-        // 判断是否包含番号（覆盖多种格式）
         const hasCode = (s) => {
             if (!s) return false;
-            // 标准番号：ABC-123 / ABC_123 / ABC 123 / ABC123
             if (/\b[A-Z]{2,8}[-_ ]?\d{2,5}\b/i.test(s)) return true;
-            // FC2 番号：FC2-PPV-1234567 / FC2PPV-1234567 / FC2-1234567 / fc1476760
             if (/FC2[-_ ]?PPV[-_ ]?\d{5,8}/i.test(s)) return true;
             if (/\bfc2?\d{5,8}/i.test(s)) return true;
-            // 纯数字-数字（如 123456-789）
             if (/\b\d{4,6}[-_]\d{3,4}\b/.test(s)) return true;
-            // Tokyo-Hot 系列：Tokyo-Hot-n1234
             if (/Tokyo[-_ ]?Hot[-_ ]?[nN]?\d{3,4}/i.test(s)) return true;
-            // 无码系列：1PONDO-xxx / HEYZO-xxxx / CARIB-xxx
             if (/\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA|PACO|TOKYOHOT)[-_]?\d+/i.test(s)) return true;
             return false;
         };
 
-        // 策略1：从前往后找第一个"非域名且含番号"的段（番号通常在最前，广告在后）
         for (let i = 0; i < parts.length; i++) {
             if (isDomain(parts[i])) continue;
             if (hasCode(parts[i])) {
@@ -342,23 +312,19 @@
             }
         }
 
-        // 策略2：没有任何段含番号，若第一段是域名则取后面全部
         if (isDomain(parts[0])) {
             return parts.slice(1).join('@') + ext;
         }
 
-        // 策略3：兜底保留最后一段（兼容无番号的广告文件）
         return parts[parts.length - 1] + ext;
     };
 
-    /** 获取安全后缀（扩展名） */
     const getSafeSuffix = (filename) => {
         const m = filename.match(/\.([a-z0-9]{2,5})$/i);
         if (m && !/^\d+$/.test(m[1])) return m[0];
         return '';
     };
 
-    /** 日期标准化 */
     const normDate = (d) => {
         if (!d) return '';
         const m = d.trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
@@ -368,10 +334,8 @@
         return d;
     };
 
-    /** 判断是否为"未找到"标题 */
     const isNotFoundTitle = (t) => /404|not\s*found|page\s*not\s*found|no\s*result|找不到|页面不存在|查無|查无|無此|无此/i.test(String(t || ''));
 
-    /** 将GM_xmlhttpRequest转为Promise */
     const gmRequest = (options) => {
         return new Promise((resolve, reject) => {
             const timeout = options.timeout || 15000;
@@ -385,19 +349,15 @@
         });
     };
 
-    /** HTML解析辅助 */
     const parseHTML = (html) => new DOMParser().parseFromString(html, 'text/html');
 
     // ========================================================================
-    // 3. 缓存管理（GM存储）
+    // 3. 缓存管理
     // ========================================================================
     const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
     const NEGATIVE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-    const getCache = (key) => {
-        const cache = JSON.parse(GM_getValue(key, '{}'));
-        return cache;
-    };
+    const getCache = (key) => JSON.parse(GM_getValue(key, '{}'));
     const setCache = (key, data) => GM_setValue(key, JSON.stringify(data));
 
     let infoCache = getCache('jb_infoCache');
@@ -427,10 +387,8 @@
     };
 
     // ========================================================================
-    // 4. 番号提取相关（FC2、无码、常规）
+    // 4. 番号提取
     // ========================================================================
-
-    /** 生成完整前缀列表（手动 + 自动双字母 + 单字母） */
     function buildPrefixList() {
         const prefixes = [...MANUAL_PREFIXES];
         const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -459,7 +417,6 @@
         looseRegex: new RegExp(`\\b${p}[-_ ]?0*(\\d{1,5})(?![0-9])`, 'i')
     }));
 
-    /** 通过前缀匹配番号 */
     const matchCodeByPrefix = (str) => {
         if (!str) return null;
         for (const item of CODE_PREFIX_PATTERNS) {
@@ -482,7 +439,6 @@
         return null;
     };
 
-    /** FC2番号提取（支持多种变体） */
     const extractFC2Code = (str) => {
         const patterns = [
             /\bfc2ppv[-_\s]*(\d{5,8})\b/i,
@@ -504,7 +460,6 @@
         return null;
     };
 
-    /** 无码检测（基于番号前缀或关键词） */
     const checkUncensored = (fh, title) => {
         if (/无码|無修正|uncensored/i.test(title)) return true;
         const uncensoredPatterns = [
@@ -518,7 +473,6 @@
         return reg.test(title.toUpperCase());
     };
 
-    /** 从标题中移除番号本身（避免重复） */
     const removeCodeFromTitle = (str, baseCode) => {
         if (!baseCode) return str;
         const stdMatch = baseCode.match(/^([A-Za-z]+)[-_\s]?(\d+)$/);
@@ -527,11 +481,14 @@
             const rawNum = parseInt(stdMatch[2], 10).toString();
             str = str.replace(new RegExp(`\\b${prefix}[-_\\s.]*0*${rawNum}(?![_\\s.-]*[a-zA-Z]\\d)`, 'gi'), ' ');
         }
-        if (/^FC2[-_\s]?PPV[-_\s]?\d+$/i.test(baseCode)) {
+
+        // 全面清理 FC2 的残留
+        if (/^FC2-PPV-\d+$/i.test(baseCode)) {
             const num = baseCode.match(/\d+$/)[0];
             const rawNum = parseInt(num, 10).toString();
-            str = str.replace(new RegExp(`\\b(?:FC2[-_\\s.]?(?:PPV[-_\\s.]?)?0*${rawNum}|PPV[-_\\s.]?0*${rawNum})(?![_\\s.-]*[a-zA-Z]\\d)`, 'gi'), ' ');
+            str = str.replace(new RegExp(`\\b(?:fc2?[-_\\s]*(?:ppv[-_\\s]*)?|ppv[-_\\s]*)0*${rawNum}(?:[-_\\s]*(?:sp|part|cd|disc|vol|pt|p|ep|episode)?[-_\\s]*\\d{1,3}|[-_\\s]*sp)?\\b`, 'gi'), ' ');
         }
+
         const thMatch = baseCode.match(/^Tokyo[-_\s]*Hot[-_\s]*[nN](\d{3,4})$/i);
         if (thMatch) {
             const num = thMatch[1].padStart(4, '0');
@@ -547,7 +504,6 @@
         return str.replace(/\s+/g, ' ').trim();
     };
 
-    /** 分段信息提取（CD/PART/SP等） */
     const extractPartInfoFromFileName = (fileName, code) => {
         if (!fileName) return '';
         const base = stripDomainPrefix(stripFileExt(fileName)).replace(/^h[_\-. ]*\d{2,5}[_\-. ]*/i, '');
@@ -580,8 +536,8 @@
 
         let spMatch = U.match(/(?:^|[\s._\-\[\(【（])(SP|SPECIAL)[\s._-]*(\d{1,3})?(?=$|[\s._\-\)】）])/i);
         if (spMatch) {
-            if (spMatch[2]) return numLabel(spMatch[2]);
-            else return 'SP';
+            if (spMatch[2]) return 'sp' + numLabel(spMatch[2]);
+            else return 'sp';
         }
 
         m = tailZone.match(/(?:^|[\s._\-])0*([1-9]\d?)\s*(?:OF|\/|／|-)\s*0*([1-9]\d?)(?:$|[\s._\-])/);
@@ -590,7 +546,11 @@
         if (code) {
             const codeStr = String(code).toUpperCase();
             const parts = codeStr.split('-');
-            const prefix = parts[0] || '', numRaw = parts[1] || '';
+            let prefix = parts[0] || '', numRaw = parts[1] || '';
+            if (prefix === 'FC2' && parts.length >= 3) {
+                prefix = parts[0] + '-' + parts[1]; // FC2-PPV
+                numRaw = parts[2];
+            }
             const num = numRaw.replace(/^0+/, '') || numRaw;
             if (prefix && num) {
                 const codeRe = new RegExp('(?:^|[^A-Z0-9])' + escapeRegExp(prefix) + '[\\s._-]*0*' + escapeRegExp(num) + '(?=$|[^A-Z0-9])', 'i');
@@ -660,14 +620,35 @@
                     queryCode = fc2Code;
                     displayCode = fc2Code;
                     const fc2Num = fc2Code.match(/\d+$/)[0];
-                    rawForCode = rawForCode.replace(
-                        new RegExp(`(?:^|\\s)fc2?ppv?[\\s_-]*(?:ppv[\\s_-]*)?0*${fc2Num}(?:[-_\\s]?\\d{1,3})?`, 'i'),
-                        ' '
-                    ).trim();
-                    const partMatch = rawForCode.match(/[-_](\d{1,3})(?:\s|$)/);
-                    if (partMatch) {
-                        part = normalizePartToken(partMatch[1]);
-                        rawForCode = rawForCode.replace(partMatch[0], ' ').trim();
+
+                    const fc2FullRegex = new RegExp(`(?:fc2?[-_\\s]*(?:ppv[-_\\s]*)?)0*${fc2Num}(?:[-_\\s]*(?:sp|part|cd|disc|vol|pt|p|ep|episode)?[-_\\s]*\\d{1,3}|[-_\\s]*sp)?`, 'i');
+
+                    const fullMatch = rawForCode.match(fc2FullRegex);
+                    if (fullMatch) {
+                        let matchStr = fullMatch[0];
+                        let spMatch = matchStr.match(/[-_\s]sp[-_\s]*(\d{1,3})?/i);
+                        if (spMatch) {
+                            part = spMatch[1] ? 'sp' + normalizePartToken(spMatch[1]) : 'sp';
+                        } else {
+                            let numMatch = matchStr.match(/[-_\s]*(?:(?:part|cd|disc|vol|pt|p|ep)[-_\s]*)?(\d{1,3})$/i);
+                            if (numMatch) {
+                                part = normalizePartToken(numMatch[1]);
+                            }
+                        }
+                        rawForCode = rawForCode.replace(matchStr, ' ').trim();
+                    } else {
+                        rawForCode = rawForCode.replace(new RegExp(`fc2?[-_\\s]*(?:ppv[-_\\s]*)?0*${fc2Num}`, 'i'), ' ').trim();
+                        const partMatch = rawForCode.match(/[-_](sp\d*|[a-z]*\d{1,3})\b/i);
+                        if (partMatch) {
+                            let pStr = partMatch[1].toLowerCase();
+                            if (pStr.includes('sp')) {
+                                let pNum = pStr.replace('sp', '');
+                                part = pNum ? 'sp' + normalizePartToken(pNum) : 'sp';
+                            } else if (/^\d+$/.test(pStr)) {
+                                part = normalizePartToken(pStr);
+                            }
+                            rawForCode = rawForCode.replace(partMatch[0], ' ').trim();
+                        }
                     }
                 } else {
                     const uncensoredMatch = t.match(/\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA)[-_]?(\d+)/i);
@@ -728,12 +709,14 @@
 
             const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const keywordRegex = new RegExp(
-                `${escapedBase}[\\s._-]*(?:part|pt|cd|disc|ep|sp|vol|no|volume)[\\s._-]*(\\d{1,3}|[a-dA-D])(?![a-zA-Z0-9])`,
+                `${escapedBase}[\\s._-]*(part|pt|cd|disc|ep|sp|vol|no|volume)[\\s._-]*(\\d{1,3}|[a-dA-D])(?![a-zA-Z0-9])`,
                 'i'
             );
             const kwMatch = rawForCode.match(keywordRegex);
             if (kwMatch) {
-                part = kwMatch[1].toUpperCase();
+                const kwType = kwMatch[1].toLowerCase();
+                const kwVal = kwMatch[2].toUpperCase();
+                part = kwType === 'sp' ? 'sp' + kwVal : kwVal;
                 rawForCode = rawForCode.replace(kwMatch[0], ' ').trim();
             } else if (!part) {
                 const numRegex = new RegExp(
@@ -760,7 +743,15 @@
                     rawForCode = rawForCode.trim();
                 }
             }
-            const fullCode = part ? `${baseCode}-${part}` : baseCode;
+
+            let finalPart = part;
+            if (finalPart) {
+                finalPart = String(finalPart).toLowerCase();
+                if (/^\d+$/.test(finalPart)) {
+                    finalPart = 'cd' + finalPart;
+                }
+            }
+            const fullCode = finalPart ? `${baseCode}-${finalPart}` : baseCode;
 
             let cleanTitle = removeMarkers(rawForCode);
             cleanTitle = cleanTitle.replace(/(?:\b|_|^|@|】|\[|【)(?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2}(?:\b|_|$|(?=[A-Z]))/ig, ' ');
@@ -867,9 +858,8 @@
     };
 
     // ========================================================================
-    // 8. 远程刮削（Promise化，并发控制）
+    // 8. 远程刮削
     // ========================================================================
-
     const javbusBase = "https://www.javbus.com/";
     const javbusDirectAccess = javbusBase;
     const javbusUncensoredBase = javbusBase + "uncensored/";
@@ -880,7 +870,6 @@
     const javdbSearchBase = javdbBase + "/search?q=";
     const fc2ppvdbBase = "https://fc2ppvdb.com/articles/";
 
-    /** 通用搜索变体尝试 */
     const trySearchVariants = (code, onQuery, onAllFail) => {
         const variants = getCodeQueryVariants(code);
         let idx = 0;
@@ -892,89 +881,64 @@
         next();
     };
 
-    /** javlibrary */
     const fetchJavlib = (code) => {
         return new Promise((resolve, reject) => {
             trySearchVariants(code, (q, next) => {
-                gmRequest({
-                    method: 'GET',
-                    url: javlibSearchBase + encodeURIComponent(q),
-                    anonymous: true,
-                    timeout: 15000
-                }).then(res => {
-                    const doc = parseHTML(res.responseText);
-                    let link = doc.querySelector('#video_title a')?.getAttribute('href') ||
-                        doc.querySelector('div.video a[href*="?v="]')?.getAttribute('href');
-                    if (!link) { next(); return; }
-                    if (link.startsWith('/')) link = javlibBase.replace(/\/+$/, '') + link;
-                    return gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 });
-                }).then(res2 => {
-                    const ddoc = parseHTML(res2.responseText);
-                    let ttl = ddoc.querySelector('#video_title a')?.textContent.trim() ||
-                        ddoc.querySelector('#video_title')?.textContent.trim() || '';
-                    if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
-                    if (isNotFoundTitle(ttl)) ttl = '';
-                    const dateText = ddoc.querySelector('#video_date td.text')?.textContent.trim() || '';
-                    const isoDate = normDate(dateText);
-                    const actresses = [];
-                    ddoc.querySelectorAll('#video_cast td.text a').forEach(a => {
-                        const n = a.textContent.trim();
-                        if (n) actresses.push(n);
-                    });
-                    if (!ttl) { next(); return; }
-                    const info = { title: ttl, date: isoDate, actresses };
-                    resolve(info);
-                }).catch(() => { next(); });
+                gmRequest({ method: 'GET', url: javlibSearchBase + encodeURIComponent(q), anonymous: true, timeout: 15000 })
+                    .then(res => {
+                        const doc = parseHTML(res.responseText);
+                        let link = doc.querySelector('#video_title a')?.getAttribute('href') || doc.querySelector('div.video a[href*="?v="]')?.getAttribute('href');
+                        if (!link) { next(); return; }
+                        if (link.startsWith('/')) link = javlibBase.replace(/\/+$/, '') + link;
+                        return gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 });
+                    }).then(res2 => {
+                        const ddoc = parseHTML(res2.responseText);
+                        let ttl = ddoc.querySelector('#video_title a')?.textContent.trim() || ddoc.querySelector('#video_title')?.textContent.trim() || '';
+                        if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
+                        if (isNotFoundTitle(ttl)) ttl = '';
+                        const dateText = ddoc.querySelector('#video_date td.text')?.textContent.trim() || '';
+                        const isoDate = normDate(dateText);
+                        const actresses = [];
+                        ddoc.querySelectorAll('#video_cast td.text a').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
+                        if (!ttl) { next(); return; }
+                        resolve({ title: ttl, date: isoDate, actresses });
+                    }).catch(() => { next(); });
             }, () => { reject(new Error('JavLibrary 搜索无结果')); });
         });
     };
 
-    /** javbus（支持无码回退） */
     const fetchJavbus = (code) => {
         return new Promise((resolve, reject) => {
             const variants = getCodeQueryVariants(code).filter(v => !/[\s_]/.test(v));
             let vi = 0;
             const tryOne = (q) => {
                 const tryBase = (u) => {
-                    return gmRequest({
-                        method: 'GET',
-                        url: u + q,
-                        anonymous: true,
-                        timeout: 15000
-                    }).then(res => {
-                        const doc = parseHTML(res.responseText);
-                        let ttl = null;
-                        const h3 = doc.querySelector('h3');
-                        if (h3) { ttl = h3.textContent.trim(); if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim(); }
-                        if (!ttl) ttl = doc.querySelector('div.photo-frame img')?.getAttribute('title') || '';
-                        if (!ttl) {
-                            ttl = doc.querySelector('title')?.textContent.trim() || '';
-                            if (ttl.includes(' - JavBus')) ttl = ttl.split(' - JavBus')[0].trim();
-                            if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
-                        }
-                        if (isNotFoundTitle(ttl)) ttl = null;
-                        if (!ttl) return Promise.reject();
-                        let isoDate = '';
-                        doc.querySelectorAll('p').forEach(p => {
-                            const t = p.textContent.trim();
-                            if (/發行日期|发行日期/.test(t)) {
-                                const m = t.match(/(\d{4}-\d{2}-\d{2})/);
-                                if (m) isoDate = normDate(m[1]);
+                    return gmRequest({ method: 'GET', url: u + q, anonymous: true, timeout: 15000 })
+                        .then(res => {
+                            const doc = parseHTML(res.responseText);
+                            let ttl = null;
+                            const h3 = doc.querySelector('h3');
+                            if (h3) { ttl = h3.textContent.trim(); if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim(); }
+                            if (!ttl) ttl = doc.querySelector('div.photo-frame img')?.getAttribute('title') || '';
+                            if (!ttl) {
+                                ttl = doc.querySelector('title')?.textContent.trim() || '';
+                                if (ttl.includes(' - JavBus')) ttl = ttl.split(' - JavBus')[0].trim();
+                                if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
                             }
-                        });
-                        if (!isoDate) {
-                            const p = doc.querySelector('.info p:nth-of-type(2)');
-                            if (p) isoDate = normDate(p.textContent.replace(/.*?[:：]/, '').trim());
-                        }
-                        const actresses = [];
-                        doc.querySelectorAll('span.genre a[href*="/star/"]').forEach(a => {
-                            const n = a.textContent.trim();
-                            if (n) actresses.push(n);
-                        });
-                        const info = { title: ttl, date: isoDate, actresses };
-                        if (u.includes('uncensored')) info.uncensored = true;
-                        return info;
-                    }).catch(() => { throw new Error('fail'); });
+                            if (isNotFoundTitle(ttl)) ttl = null;
+                            if (!ttl) return Promise.reject();
+                            let isoDate = '';
+                            doc.querySelectorAll('p').forEach(p => { const t = p.textContent.trim(); if (/發行日期|发行日期/.test(t)) { const m = t.match(/(\d{4}-\d{2}-\d{2})/); if (m) isoDate = normDate(m[1]); } });
+                            if (!isoDate) {
+                                const p = doc.querySelector('.info p:nth-of-type(2)');
+                                if (p) isoDate = normDate(p.textContent.replace(/.*?[:：]/, '').trim());
+                            }
+                            const actresses = [];
+                            doc.querySelectorAll('span.genre a[href*="/star/"]').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
+                            const info = { title: ttl, date: isoDate, actresses };
+                            if (u.includes('uncensored')) info.uncensored = true;
+                            return info;
+                        }).catch(() => { throw new Error('fail'); });
                 };
                 tryBase(javbusDirectAccess).catch(() => tryBase(javbusUncensoredBase))
                     .then(info => resolve(info))
@@ -988,54 +952,48 @@
         });
     };
 
-    /** xslist */
     const fetchXslist = (code) => {
         return new Promise((resolve, reject) => {
             trySearchVariants(code, (q, next) => {
-                gmRequest({
-                    method: 'GET',
-                    url: xslistBase + 'search?query=' + encodeURIComponent(q),
-                    anonymous: true,
-                    timeout: 15000
-                }).then(res => {
-                    const sdoc = parseHTML(res.responseText);
-                    const parsePage = (doc) => {
-                        const uc = code.toUpperCase().replace(/[-_\s]/g, '');
-                        let tr = null;
-                        doc.querySelectorAll('#movices tbody tr').forEach(row => {
-                            const c = (row.querySelector('td strong')?.textContent || '').trim().toUpperCase().replace(/[-_\s]/g, '');
-                            if (c === uc) tr = row;
-                        });
-                        if (!tr) return null;
-                        const tds = tr.querySelectorAll('td');
-                        const ttl = tds[1]?.textContent.trim() || '';
-                        const dt = tds[2]?.textContent.trim() || '';
-                        let isoDate = '';
-                        if (dt && !/n\/a/i.test(dt)) isoDate = normDate(dt);
-                        const aname = doc.querySelector('h1 span[itemprop="name"]')?.textContent.trim() || '';
-                        const actresses = aname ? [aname] : [];
-                        if (!ttl) return null;
-                        return { title: ttl, date: isoDate, actresses };
-                    };
-                    let info = null;
-                    if (sdoc.querySelector('#movices') && sdoc.querySelector('h1 span[itemprop="name"]')) {
-                        info = parsePage(sdoc);
-                        if (info) { resolve(info); return; }
-                    }
-                    let link = sdoc.querySelector('a[href*="/model/"]')?.getAttribute('href');
-                    if (!link) { next(); return; }
-                    if (link.startsWith('/')) link = xslistBase.replace(/\/+$/, '') + link;
-                    gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 }).then(res2 => {
-                        const info2 = parsePage(parseHTML(res2.responseText));
-                        if (info2) resolve(info2);
-                        else next();
+                gmRequest({ method: 'GET', url: xslistBase + 'search?query=' + encodeURIComponent(q), anonymous: true, timeout: 15000 })
+                    .then(res => {
+                        const sdoc = parseHTML(res.responseText);
+                        const parsePage = (doc) => {
+                            const uc = code.toUpperCase().replace(/[-_\s]/g, '');
+                            let tr = null;
+                            doc.querySelectorAll('#movices tbody tr').forEach(row => {
+                                const c = (row.querySelector('td strong')?.textContent || '').trim().toUpperCase().replace(/[-_\s]/g, '');
+                                if (c === uc) tr = row;
+                            });
+                            if (!tr) return null;
+                            const tds = tr.querySelectorAll('td');
+                            const ttl = tds[1]?.textContent.trim() || '';
+                            const dt = tds[2]?.textContent.trim() || '';
+                            let isoDate = '';
+                            if (dt && !/n\/a/i.test(dt)) isoDate = normDate(dt);
+                            const aname = doc.querySelector('h1 span[itemprop="name"]')?.textContent.trim() || '';
+                            const actresses = aname ? [aname] : [];
+                            if (!ttl) return null;
+                            return { title: ttl, date: isoDate, actresses };
+                        };
+                        let info = null;
+                        if (sdoc.querySelector('#movices') && sdoc.querySelector('h1 span[itemprop="name"]')) {
+                            info = parsePage(sdoc);
+                            if (info) { resolve(info); return; }
+                        }
+                        let link = sdoc.querySelector('a[href*="/model/"]')?.getAttribute('href');
+                        if (!link) { next(); return; }
+                        if (link.startsWith('/')) link = xslistBase.replace(/\/+$/, '') + link;
+                        gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 }).then(res2 => {
+                            const info2 = parsePage(parseHTML(res2.responseText));
+                            if (info2) resolve(info2);
+                            else next();
+                        }).catch(() => next());
                     }).catch(() => next());
-                }).catch(() => next());
             }, () => { reject(new Error('xslist 搜索无结果')); });
         });
     };
 
-    /** javdb（含性别检测） */
     const detectJavdbActorGender = (linkElement) => {
         if (!linkElement) return 'unknown';
         const link = $(linkElement);
@@ -1058,71 +1016,57 @@
     const fetchJavdb = (code) => {
         return new Promise((resolve, reject) => {
             trySearchVariants(code, (q, next) => {
-                gmRequest({
-                    method: 'GET',
-                    url: javdbSearchBase + encodeURIComponent(q) + '&f=all',
-                    anonymous: true,
-                    timeout: 15000
-                }).then(res => {
-                    const hdoc = parseHTML(res.responseText);
-                    let link = hdoc.querySelector('a[href*="/v/"]')?.getAttribute('href') ||
-                        hdoc.querySelector('.movie-list .item a')?.getAttribute('href');
-                    if (!link) { next(); return; }
-                    if (link.startsWith('/')) link = javdbBase + link;
-                    return gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 });
-                }).then(res2 => {
-                    const ddoc = parseHTML(res2.responseText);
-                    let ttl = ddoc.querySelector('h2.title')?.textContent.trim() ||
-                        ddoc.querySelector('strong.current-title')?.textContent.trim() || '';
-                    if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
-                    if (isNotFoundTitle(ttl)) ttl = '';
-                    let dateText = '';
-                    ddoc.querySelectorAll('.panel-block').forEach(block => {
-                        const t = block.textContent.trim();
-                        if (/日期:|發行日期:|发行日期:/.test(t)) {
-                            dateText = t.replace(/.*?[:：]/, '').trim();
-                        }
-                    });
-                    const isoDate = normDate(dateText);
-                    const actorEntries = [];
-                    ddoc.querySelectorAll('a[href*="/actors/"]').forEach(a => {
-                        const name = a.textContent.trim();
-                        if (!name) return;
-                        const gender = detectJavdbActorGender(a);
-                        actorEntries.push({ name, gender });
-                    });
-                    const actresses = actorEntries.map(e => e.name);
-                    if (!ttl) { next(); return; }
-                    const info = { title: ttl, date: isoDate, actresses, actorEntries };
-                    resolve(info);
-                }).catch(() => next());
+                gmRequest({ method: 'GET', url: javdbSearchBase + encodeURIComponent(q) + '&f=all', anonymous: true, timeout: 15000 })
+                    .then(res => {
+                        const hdoc = parseHTML(res.responseText);
+                        let link = hdoc.querySelector('a[href*="/v/"]')?.getAttribute('href') || hdoc.querySelector('.movie-list .item a')?.getAttribute('href');
+                        if (!link) { next(); return; }
+                        if (link.startsWith('/')) link = javdbBase + link;
+                        return gmRequest({ method: 'GET', url: link, anonymous: true, timeout: 15000 });
+                    }).then(res2 => {
+                        const ddoc = parseHTML(res2.responseText);
+                        let ttl = ddoc.querySelector('h2.title')?.textContent.trim() || ddoc.querySelector('strong.current-title')?.textContent.trim() || '';
+                        if (ttl.toUpperCase().startsWith(code.toUpperCase())) ttl = ttl.slice(code.length).trim();
+                        if (isNotFoundTitle(ttl)) ttl = '';
+                        let dateText = '';
+                        ddoc.querySelectorAll('.panel-block').forEach(block => {
+                            const t = block.textContent.trim();
+                            if (/日期:|發行日期:|发行日期:/.test(t)) { dateText = t.replace(/.*?[:：]/, '').trim(); }
+                        });
+                        const isoDate = normDate(dateText);
+                        const actorEntries = [];
+                        ddoc.querySelectorAll('a[href*="/actors/"]').forEach(a => {
+                            const name = a.textContent.trim();
+                            if (!name) return;
+                            const gender = detectJavdbActorGender(a);
+                            actorEntries.push({ name, gender });
+                        });
+                        const actresses = actorEntries.map(e => e.name);
+                        if (!ttl) { next(); return; }
+                        const info = { title: ttl, date: isoDate, actresses, actorEntries };
+                        resolve(info);
+                    }).catch(() => next());
             }, () => { reject(new Error('JavDB 搜索无结果')); });
         });
     };
 
-    /** fc2ppvdb */
     const fetchFC2PPVDB = (code) => {
         const fc2Number = code.match(/\d+$/)[0];
-        return gmRequest({
-            method: 'GET',
-            url: fc2ppvdbBase + fc2Number,
-            anonymous: true,
-            timeout: 15000
-        }).then(res => {
-            const doc = parseHTML(res.responseText);
-            let title = null;
-            const link = doc.querySelector('a[href*="adult.contents.fc2.com"]');
-            if (link) title = link.textContent.trim();
-            if (!title) {
-                title = doc.querySelector('title')?.textContent.trim() || '';
-                if (title.includes(' - FC2PPVDB')) title = title.replace(' - FC2PPVDB', '').trim();
-            }
-            if (!title) throw new Error('无标题');
-            return { title, date: '', actresses: [] };
-        });
+        return gmRequest({ method: 'GET', url: fc2ppvdbBase + fc2Number, anonymous: true, timeout: 15000 })
+            .then(res => {
+                const doc = parseHTML(res.responseText);
+                let title = null;
+                const link = doc.querySelector('a[href*="adult.contents.fc2.com"]');
+                if (link) title = link.textContent.trim();
+                if (!title) {
+                    title = doc.querySelector('title')?.textContent.trim() || '';
+                    if (title.includes(' - FC2PPVDB')) title = title.replace(' - FC2PPVDB', '').trim();
+                }
+                if (!title) throw new Error('无标题');
+                return { title, date: '', actresses: [] };
+            });
     };
 
-    /** missav fc2 */
     const fetchMissavFC2 = (code) => {
         const standardFC2 = code;
         const expectedId = standardFC2.toLowerCase();
@@ -1136,13 +1080,8 @@
                     return Promise.reject(new Error('Web Crypto not supported'));
                 }
                 const encoder = new TextEncoder();
-                return globalThis.crypto.subtle.importKey(
-                    'raw',
-                    encoder.encode(publicToken),
-                    { name: 'HMAC', hash: 'SHA-1' },
-                    false,
-                    ['sign']
-                ).then(key => globalThis.crypto.subtle.sign('HMAC', key, encoder.encode(unsignedPath)))
+                return globalThis.crypto.subtle.importKey('raw', encoder.encode(publicToken), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
+                    .then(key => globalThis.crypto.subtle.sign('HMAC', key, encoder.encode(unsignedPath)))
                     .then(signature => {
                         const sig = Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
                         return unsignedPath + '&frontend_sign=' + sig;
@@ -1153,14 +1092,8 @@
                     method: 'POST',
                     url: 'https://client-rapi-missav.recombee.com' + signedPath,
                     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    data: JSON.stringify({
-                        searchQuery: standardFC2,
-                        count: 10,
-                        cascadeCreate: true,
-                        returnProperties: true
-                    }),
-                    anonymous: true,
-                    timeout: 15000
+                    data: JSON.stringify({ searchQuery: standardFC2, count: 10, cascadeCreate: true, returnProperties: true }),
+                    anonymous: true, timeout: 15000
                 });
             }).then(res => {
                 const data = JSON.parse(res.responseText);
@@ -1170,29 +1103,18 @@
                 const values = exact.values;
                 const title = String(values.title || '').trim();
                 if (!title) throw new Error('No title');
-                const actors = [].concat(
-                    Array.isArray(values.actresses) ? values.actresses : [],
-                    Array.isArray(values.actors) ? values.actors : []
-                );
+                const actors = [].concat(Array.isArray(values.actresses) ? values.actresses : [], Array.isArray(values.actors) ? values.actors : []);
                 let date = null;
                 const releasedAt = Number(values.released_at);
-                if (Number.isFinite(releasedAt) && releasedAt > 0) {
-                    date = new Date(releasedAt * 1000).toISOString().slice(0, 10);
-                }
+                if (Number.isFinite(releasedAt) && releasedAt > 0) { date = new Date(releasedAt * 1000).toISOString().slice(0, 10); }
                 return { title, date, actresses: actors };
             }).then(resolve).catch(reject);
         });
     };
 
-    /** avsox（无码站） */
     const fetchAvsox = (code) => {
         const url = 'https://avsox.host/cn/search/' + encodeURIComponent(code);
-        return gmRequest({
-            method: 'GET',
-            url,
-            anonymous: true,
-            timeout: 15000
-        }).then(res => {
+        return gmRequest({ method: 'GET', url, anonymous: true, timeout: 15000 }).then(res => {
             const doc = parseHTML(res.responseText);
             const item = doc.querySelector('.movie-box');
             if (!item) throw new Error('No movie found');
@@ -1202,17 +1124,14 @@
             const dateEl = doc.querySelector('.date') || doc.querySelector('.info .date');
             const date = dateEl ? dateEl.textContent.trim() : '';
             const actresses = [];
-            doc.querySelectorAll('.star a, .actress a').forEach(a => {
-                const n = a.textContent.trim();
-                if (n) actresses.push(n);
-            });
+            doc.querySelectorAll('.star a, .actress a').forEach(a => { const n = a.textContent.trim(); if (n) actresses.push(n); });
             if (!title) throw new Error('No title content');
             return { title, date, actresses, uncensored: true };
         });
     };
 
     // ========================================================================
-    // 9. 远程信息获取（并发 + 超时控制）
+    // 9. 远程信息获取
     // ========================================================================
     const fetchRemoteInfo = (code, isUncensored = false) => {
         const key = code.toUpperCase();
@@ -1262,7 +1181,7 @@
     };
 
     // ========================================================================
-    // 10. 翻译（DeepL + MyMemory）
+    // 10. 翻译
     // ========================================================================
     const translateTitleToChinese = (title, enabled, fh) => {
         return new Promise((resolve) => {
@@ -1275,8 +1194,7 @@
                     url: 'https://oneshot-free.www.deepl.com/v1/translate',
                     headers: { 'Authorization': 'None', 'Content-Type': 'application/json' },
                     data: JSON.stringify({ text: [originalTitle], source_lang: 'ja', target_lang: 'zh-Hans' }),
-                    anonymous: true,
-                    timeout: 15000
+                    anonymous: true, timeout: 15000
                 }).then(res => {
                     const data = JSON.parse(res.responseText);
                     const translated = data?.translations?.[0]?.text?.trim() || '';
@@ -1286,12 +1204,7 @@
             };
             const myMemory = () => {
                 const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(originalTitle) + '&langpair=ja%7Czh-CN';
-                return gmRequest({
-                    method: 'GET',
-                    url,
-                    anonymous: true,
-                    timeout: 15000
-                }).then(res => {
+                return gmRequest({ method: 'GET', url, anonymous: true, timeout: 15000 }).then(res => {
                     const data = JSON.parse(res.responseText);
                     if (data.responseStatus !== 200) throw new Error('MyMemory status ' + data.responseStatus);
                     const translated = data?.responseData?.translatedText?.trim() || '';
@@ -1306,7 +1219,7 @@
     };
 
     // ========================================================================
-    // 11. 改名主流程（async/await）
+    // 11. 改名主流程
     // ========================================================================
     const getTargetName = async (vInfo, suffix, addDate, translateChinese) => {
         const code = vInfo.queryCode;
@@ -1386,7 +1299,7 @@
     };
 
     // ========================================================================
-    // 13. 进度条与通知（UI）
+    // 13. UI, 进度条与通知
     // ========================================================================
     window.renameInProgress = false;
 
@@ -1447,9 +1360,6 @@
         finish() { this.paused = false; this.update(this.total); setTimeout(() => $('#task-progress-box').fadeOut(300), 800); }
     };
 
-    // ========================================================================
-    // 14. Toast 通知
-    // ========================================================================
     const toastQueue = [];
     let toastActive = 0;
     const TOAST_MAX = 3;
@@ -1472,7 +1382,7 @@
     };
 
     // ========================================================================
-    // 15. 预览模板与事件委托
+    // 14. 预览模板
     // ========================================================================
     const showRenamePreview = (rows, onConfirm, onCancel) => {
         const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1546,7 +1456,7 @@
     };
 
     // ========================================================================
-    // 16. 批量预览与执行
+    // 15. 批量处理与执行
     // ========================================================================
     const buildPreviewRows = (parsedItems, isLocal, addDate, translateChinese, done) => {
         const rows = [];
@@ -1689,7 +1599,7 @@
     };
 
     // ========================================================================
-    // 17. 备份与剪贴板
+    // 16. 备份与剪贴板
     // ========================================================================
     function exportCompareToFile(list) {
         const text = list.map(item => `${item.original}\t${item.new}`).join('\n');
@@ -1728,7 +1638,7 @@
     }
 
     // ========================================================================
-    // 18. 归档功能（含演员性别优先）
+    // 17. 归档功能
     // ========================================================================
     const getSeriesFromCode = code => {
         const c = (typeof code === 'object' ? code.queryCode : String(code)).toUpperCase();
@@ -1874,7 +1784,7 @@
     };
 
     // ========================================================================
-    // 19. 分桶归档
+    // 18. 分桶归档
     // ========================================================================
     const getBucketFolderName = (code) => {
         const c = String(code).toUpperCase();
@@ -1925,7 +1835,7 @@
     };
 
     // ========================================================================
-    // 20. JavDB 评分
+    // 19. JavDB 评分
     // ========================================================================
     const getJavdbRating = () => {
         const $items = $("iframe[rel='wangpan']").contents().find("li.selected");
@@ -2073,7 +1983,7 @@
     };
 
     // ========================================================================
-    // 21. UI 初始化与菜单
+    // 20. UI 初始化与菜单
     // ========================================================================
     const rootInfoId = 'archive-root-info-' + Date.now();
     function cleanupExistingRootInfo() {
@@ -2122,7 +2032,7 @@
     if (document.readyState === 'complete') initializeRootInfo();
 
     // ========================================================================
-    // 22. 菜单定义与绑定
+    // 21. 菜单定义与绑定
     // ========================================================================
     const rename_list = `
         <li id="rename_list">
@@ -2170,5 +2080,5 @@
         }
     }
 
-    console.log('115Rename2026 v2.3.1 已加载（修复@分隔番号丢失问题）');
+    console.log('115Rename2026 v2.3.4 已加载（统一分段格式为cd和sp）');
 })();
