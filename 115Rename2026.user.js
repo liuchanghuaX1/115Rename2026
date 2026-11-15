@@ -40,7 +40,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.0.0';
+    const SCRIPT_VERSION = '2.0.0';
 
     // ============================================================
     // 默认设置
