@@ -18,6 +18,8 @@
 // @grant           unsafeWindow
 // @license         MIT
 // @run-at          document-idle
+// @updateURL       https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026.user.js
+// @downloadURL     https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026.user.js
 // ==/UserScript==
 
 (function () {
