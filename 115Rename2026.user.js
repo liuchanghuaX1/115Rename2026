@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name            115Rename2026
+// @name            115Rename2026 
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         3.3.0
-// @description     115 新版适配｜字段顺序自定义｜多源检索｜分辨率清理｜无码/破解识别｜暗黑模式支持
+// @version         2.0.0
+// @description     115 新版适配｜解决与JAV老司机冲突｜侧边栏紧凑设置｜暗黑模式支持｜多源检索
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -24,6 +24,7 @@
 // @connect         api.mymemory.translated.net
 // @connect         avsox.host
 // @connect         avmoo.host
+// @connect         *
 // @grant           GM_notification
 // @grant           GM_xmlhttpRequest
 // @grant           GM_setValue
@@ -33,51 +34,49 @@
 // @grant           GM_registerMenuCommand
 // @grant           GM_addStyle
 // @license         MIT
-// @homepageURL     https://github.com/liuchanghuaX1/115Rename2026
-// @supportURL      https://github.com/liuchanghuaX1/115Rename2026/issues
-// @downloadURL     https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026.user.js
-// @updateURL       https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026.user.js
+// @run-at          document-idle
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.3.0';
+    const SCRIPT_VERSION = '3.0.0';
 
     // ============================================================
     // 默认设置
     // ============================================================
     const FIELD_DEFINITIONS = {
-        code: { label: '番号(全)', required: true, fixed: true },
-        title: { label: '标题(原)', settingKey: 'enableTitle', default: true },
-        zhTitle: { label: '标题(中)', settingKey: 'enableZhTitle', default: false },
-        actresses: { label: '女优', settingKey: 'enableActresses', default: true },
+        code: { label: '番号(全)', required: true, fixed: true, settingKey: 'enableCode' },
+        title: { label: '标题', settingKey: 'enableTitle', default: true },
+        zhTitle: { label: '中文标题', settingKey: 'enableZhTitle', default: false },
+        actresses: { label: '演员', settingKey: 'enableActresses', default: true },
         date: { label: '日期', settingKey: 'enableDate', default: true },
     };
 
     const MENU_ITEMS = [
-        { key: 'localCodeProcess', id: 'local_code_process', label: '本地番号加工' },
-        { key: 'renameMultiDate', id: 'rename_all_multi_date', label: '改名(多网站轮询)' },
-        { key: 'renameMultiZh', id: 'rename_all_multi_zh', label: '改名(中文翻译)' },
+        { key: 'localCodeProcess', id: 'local_code_process', label: '本地番号规范' },
+        { key: 'renameMultiDate', id: 'rename_all_multi_date', label: '联网改名' },
+        { key: 'renameMultiZh', id: 'rename_all_multi_zh', label: '中文标题' },
         { key: 'archiveFolder', id: 'archive_to_folder', label: '归档至文件夹' },
         { key: 'archiveBucket', id: 'archive_to_bucket', label: '分桶归档' },
         { key: 'setArchiveRoot', id: 'set_archive_root', label: '设为归档根目录' },
-        { key: 'javdbRating', id: 'get_javdb_rating', label: '获取javdb评分' },
-        { key: 'backupFileNames', id: 'backup_file_names', label: '备份文件名' },
+        { key: 'javdbRating', id: 'get_javdb_rating', label: '获取javdb评分' }
     ];
 
     const DEFAULT_SETTINGS = {
-        fieldOrder: 'code,title,actresses,date',
+        fieldOrder: 'code,title,zhTitle,actresses,date',
+        sourceOrder: 'javdb,javbus,javlibrary,xslist,fc2ppvdb,missav,avsox,avmoo,custom',
+        scrapeSources: 'javdb,javbus,javlibrary,xslist,fc2ppvdb,missav,avsox,avmoo',
+        customSources: '',
         fieldSeparator: ' ',
         datePrefix: '-',
         actressSeparator: '・',
         enableTitle: true, enableZhTitle: false, enableActresses: true, enableDate: true, enableMarkers: true,
-        translateChinese: false, protectManualName: true, useCdPrefix: true,
+        translateChinese: false, protectManualName: true, segmentPrefix: 'cd',
         renameConcurrency: 3, archiveConcurrency: 3,
-        scrapeSources: 'javdb,javbus,javlibrary,xslist,fc2ppvdb,missav,avsox,avmoo',
         archiveRootCid: null, archiveRootName: null, archiveRootPath: '',
         cacheTtlDays: 90, negativeCacheTtlHours: 24, actressAlias: null,
-        menuVisibility: { localCodeProcess: true, renameMultiDate: true, renameMultiZh: true, archiveFolder: true, archiveBucket: true, setArchiveRoot: true, javdbRating: true, backupFileNames: true },
+        menuVisibility: { localCodeProcess: true, renameMultiDate: true, renameMultiZh: true, archiveFolder: true, archiveBucket: true, setArchiveRoot: true, javdbRating: true },
     };
 
     let SETTINGS = null;
@@ -87,14 +86,20 @@
             const raw = GM_getValue('rename2026_settings', '');
             const p = raw ? JSON.parse(raw) : {};
             SETTINGS = Object.assign({}, DEFAULT_SETTINGS, p);
+
+            if (p.hasOwnProperty('useCdPrefix') && SETTINGS.segmentPrefix === undefined) {
+                SETTINGS.segmentPrefix = p.useCdPrefix ? 'cd' : '';
+            }
             if (!SETTINGS.menuVisibility) SETTINGS.menuVisibility = Object.assign({}, DEFAULT_SETTINGS.menuVisibility);
+            if (!SETTINGS.fieldOrder) SETTINGS.fieldOrder = DEFAULT_SETTINGS.fieldOrder;
+            if (!SETTINGS.sourceOrder) SETTINGS.sourceOrder = DEFAULT_SETTINGS.sourceOrder;
         } catch (e) { SETTINGS = Object.assign({}, DEFAULT_SETTINGS); }
         return SETTINGS;
     }
     function saveSettings(p) { loadSettings(); if (p) Object.assign(SETTINGS, p); GM_setValue('rename2026_settings', JSON.stringify(SETTINGS)); }
 
     // ============================================================
-    // 常量（v3.2.0 增强）
+    // 常量配置
     // ============================================================
     const ACTRESS_ALIAS_MAP_DEFAULT = {
         '三上悠亜': '三上悠亚', 'Mikami Yua': '三上悠亚', '深田えいみ': '深田咏美', 'Fukada Eimi': '深田咏美',
@@ -161,22 +166,16 @@
     ];
 
     const GARBAGE_WORDS = [
-        // 分辨率
         'FHD', 'FULLHD', 'UHD', 'QHD', 'WQHD', 'HD', 'SD', 'HDR', 'HDR10', '2160P', '1440P', '1080P', '1080I', '720P', '720I', '576P', '540P', '480P', '396P', '360P', '240P',
-        // 编码
         'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC', 'VP9', 'AV1', '10BIT', '8BIT',
-        // 音频
         'AAC', 'AC3', 'DTS', 'FLAC', 'MP3', 'DDP',
-        // 容器
         'MP4', 'MKV', 'AVI', 'WMV', 'M4V', 'RMVB', 'ISO', 'TS',
-        // 其它
-        'WATERMARK', 'RARBG', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX', 'BDRIP', 'HDRIP', 'WEBDL'
+        'WATERMARK', 'RARBG', 'WEB-DL', 'WEBRIP', 'BLURAY', 'BDREMUX', 'BDRIP', 'HDRIP', 'WEBDL',
+        'HHB', 'HHC', 'HHD', 'HHH'
     ];
 
-    // 分辨率/帧率清理（不含 4K/8K，它们在 MARKER_MAP 中单独处理）
     const RESOLUTION_FPS_PATTERN = /(?<![A-Za-z0-9])(?:2160[Pp]|1440[Pp]|1080[PpIi]?|720[PpIi]?|576[Pp]|540[Pp]|480[Pp]|396[Pp]|360[Pp]|240[Pp]|FHD|FULLHD|UHD|QHD|WQHD|HDR10\+?|HDR|10[Bb][Ii][Tt]|8[Bb][Ii][Tt]|(?:24|25|30|50|60|120|144)\s*[Ff][Pp][Ss]|[Ff][Pp][Ss])(?![A-Za-z0-9])/gi;
 
-    // 标记识别（增强无码/破解）
     const MARKER_MAP = {
         '无码破解': '破解', '破解无码': '破解',
         '无码流出': '流出', '流出无码': '流出',
@@ -212,13 +211,12 @@
     const AD_BADGES = /\[3Q\]|\(原\)|\[原\]|\[BT\]|【广告】|\[廣告\]/gi;
 
     // ============================================================
-    // 工具函数（全原生）
+    // 工具函数
     // ============================================================
     const stripFileExt = n => { const s = String(n || ''); const i = s.lastIndexOf('.'); return i > 0 ? s.slice(0, i) : s; };
     const escapeRegExp = s => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const sanitizeFileName = s => s == null ? '' : String(s).replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
     const isPunctOnly = s => !s || !String(s).trim() || /^[\s\.\-_·・,，。;；:：!！?？、\/\\|+~@#$%^&*()\[\]{}【】「」『』《》<>]+$/.test(String(s).trim());
-    const normalizePartToken = p => { const s = String(p == null ? '' : p); if (/^\d+$/.test(s)) { const v = parseInt(s, 10); if (v >= 1 && v <= 999) return String(v); } return s; };
 
     const normalize115Name = n => {
         if (!n) return '';
@@ -306,7 +304,7 @@
         const parts = base.split('@').map(p => p.trim()).filter(p => p.length > 0);
         if (parts.length <= 1) return filename;
         const isDomain = s => !s ? false : (!/\.(mp4|mkv|avi|wmv|mov|flv|rmvb|webm|ts|m4v|mpg|mpeg|jpg|jpeg|png|gif|webp|bmp|iso|wav|mp3|flac|aac|srt|ass|sub)$/i.test(s) && /^(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\.[a-z]{2,})?$/i.test(s));
-        const hasCode = s => !s ? false : (/\b[A-Z]{2,8}[-_ ]?\d{2,5}\b/i.test(s) || /FC2[-_ ]?PPV[-_ ]?\d{5,8}/i.test(s) || /\bfc2?\d{5,8}/i.test(s) || /\b\d{4,6}[-_]\d{3,4}\b/.test(s) || /Tokyo[-_ ]?Hot[-_ ]?[nN]?\d{3,4}/i.test(s) || /\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA|PACO|TOKYOHOT)[-_]?\d+/i.test(s));
+        const hasCode = s => !s ? false : (/\b[A-Z]{2,8}[-_ ]?\d{2,5}/i.test(s) || /FC2[-_ ]?PPV[-_ ]?\d{5,8}/i.test(s) || /\bfc2?\d{5,8}/i.test(s) || /\b\d{4,6}[-_]\d{3,4}\b/.test(s) || /Tokyo[-_ ]?Hot[-_ ]?[nN]?\d{3,4}/i.test(s) || /\b(1PONDO|CARIB|HEYZO|10MU|MURA|H4610|NAMA|PACO|TOKYOHOT)[-_]?\d+/i.test(s));
         for (let i = 0; i < parts.length; i++) {
             if (isDomain(parts[i])) continue;
             if (hasCode(parts[i])) return parts[i] + ext;
@@ -341,9 +339,9 @@
     const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
     // ============================================================
-    // 新版 115 适配选择器（全原生）
+    // 新版 115 适配选择器
     // ============================================================
-    const V115_ROW_SELECTORS = ['li[rel="item"]', '.file-list-item', '.file-grid-item', '[data-file-id]'];
+    const V115_ROW_SELECTORS = ['li[rel="item"]', '.file-list-item', '.file-grid-item', '[data-file-id]', '.list-contents li', 'div[rel="item"]'];
     const V115_ID_ATTRS_FOLDER = ['data-file-id', 'cate_id', 'cid', 'file_id', 'data-cate-id', 'data-cid'];
     const V115_ID_ATTRS_FILE = ['data-file-id', 'file_id', 'cid', 'data-cid'];
     const V115_NAME_SELECTORS = ['.file-name .name[title]', '.file-name .name', '.file-name-responsive[title]', '.file-name-responsive', '[rel="file_name"] .name', '.name[title]', '.name'];
@@ -402,10 +400,15 @@
 
     function v115IsRowSelected(row) {
         if (!row) return false;
-        try { if (typeof row.matches === 'function' && row.matches('li.selected, .selected, .is-selected, [aria-selected="true"]')) return true; } catch (e) { }
+        try {
+            if (typeof row.matches === 'function' && row.matches('li.selected, .selected, .is-selected, .checked, [aria-selected="true"]')) return true;
+        } catch (e) { }
         if (String(row.getAttribute('aria-selected') || '') === 'true') return true;
+        if (row.classList && (row.classList.contains('selected') || row.classList.contains('checked'))) return true;
         const cb = row.querySelector('input[type="checkbox"]');
-        if (cb && cb.checked) return true;
+        if (cb && (cb.checked || cb.hasAttribute('checked'))) return true;
+        const p = row.closest('.selected, .checked, [aria-selected="true"]');
+        if (p) return true;
         return false;
     }
 
@@ -443,7 +446,7 @@
     }
 
     // ============================================================
-    // 菜单（全原生 + 样式完美对齐 + 暗黑模式）
+    // 防冲突菜单注入
     // ============================================================
     const MENU_MODERN_ANCHOR_SEL = 'button[data-menu-action="move"], button[data-menu-action="open"], button[data-menu-action="rename"], button[data-menu-action="copy"]';
     const MENU_LEGACY_ANCHOR_SEL = "li[val='open_dir'], li[data-val='open_dir'], li[menu='open_dir']";
@@ -455,8 +458,7 @@
         archive_to_folder: 'M3 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3zm2 1v1h3V4H5zm7-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1V3zm2 1v1h1V4h-1zM3 13a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3zm2 1v1h3v-1H5zm7-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-3zm2 1v1h1v-1h-1z',
         archive_to_bucket: 'M2 4a2 2 0 0 1 2-2h3v2H4v3H2V4zm14-2a2 2 0 0 1 2 2v3h-2V4h-3V2h3zm2 14a2 2 0 0 1-2 2h-3v-2h3v-3h2v3zm-16 0V13h2v3h3v2H4a2 2 0 0 1-2-2zM7 7h6v2H7V7zm0 4h6v2H7v-2z',
         set_archive_root: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
-        get_javdb_rating: 'm10 2.5 2.163 4.383 4.837.703-3.5 3.412.826 4.816L10 13.538l-4.326 2.276.826-4.816L3 7.586l4.837-.703L10 2.5zm0 4.106-1.175 2.38-2.627.382 1.901 1.853-.449 2.617L10 12.604l2.35 1.234-.449-2.617 1.901-1.853-2.627-.382L10 6.606z',
-        backup_file_names: 'M13 5.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h9zm0 2H4v8h9v-8zm3-5a2 2 0 0 1 2 2v9h-2v-9H6v-2h10z',
+        get_javdb_rating: 'm10 2.5 2.163 4.383 4.837.703-3.5 3.412.826 4.816L10 13.538l-4.326 2.276.826-4.816L3 7.586l4.837-.703L10 2.5zm0 4.106-1.175 2.38-2.627.382 1.901 1.853-.449 2.617L10 12.604l2.35 1.234-.449-2.617 1.901-1.853-2.627-.382L10 6.606z'
     };
 
     function findMenuAnchor() {
@@ -479,7 +481,6 @@
         else if (actionId === 'archive_to_bucket') archiveToBucketFolder();
         else if (actionId === 'set_archive_root') setArchiveRoot();
         else if (actionId === 'get_javdb_rating') getJavdbRating();
-        else if (actionId === 'backup_file_names') backupFileNames();
     }
 
     function injectMenu() {
@@ -515,7 +516,14 @@
                     : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" style="flex-shrink:0; width:20px; height:20px;"><g fill="none" fill-rule="evenodd"><path d="M0 0h20v20H0z"></path><circle cx="10" cy="10" r="2.5" fill="${iconColor}"></circle></g></svg>`;
 
                 btn.innerHTML = svg + `<span style="line-height: 1;">${escapeHtml(it.label)}</span>`;
-                btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); handleMenuAction(it.id); });
+
+                btn.addEventListener('click', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    handleMenuAction(it.id);
+                }, true);
+
                 wrap.appendChild(btn);
             });
             info.anchor.insertAdjacentElement('afterend', wrap);
@@ -525,7 +533,12 @@
             visible.forEach(it => {
                 const a = document.createElement('a');
                 a.id = it.id; a.className = 'mark'; a.href = 'javascript:;'; a.textContent = it.label;
-                a.addEventListener('click', e => { e.preventDefault(); handleMenuAction(it.id); });
+                a.addEventListener('click', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    handleMenuAction(it.id);
+                }, true);
                 li.appendChild(a);
             });
             info.anchor.insertAdjacentElement('beforebegin', li);
@@ -533,12 +546,35 @@
         return true;
     }
 
+    function hasJavLaosiji() {
+        return !!(window.__LAOSIJI_APP__ || window.__LAOSIJI_RUNTIME__ || document.getElementById('jav-quick-settings-popover'));
+    }
+
+    let injectDelayed = false;
     let menuInterval = setInterval(() => {
-        if (injectMenu()) clearInterval(menuInterval);
+        if (injectMenu()) {
+            clearInterval(menuInterval);
+        } else if (!injectDelayed && hasJavLaosiji()) {
+            injectDelayed = true;
+            clearInterval(menuInterval);
+            setTimeout(() => {
+                injectMenu();
+                menuInterval = setInterval(() => { if (injectMenu()) clearInterval(menuInterval); }, 1000);
+            }, 1500);
+        }
     }, 800);
 
+    let reinjectTimer = null;
+    const menuObserver = new MutationObserver(() => {
+        if (document.getElementById('rename_list_modern') || document.getElementById('rename_list')) return;
+        clearTimeout(reinjectTimer);
+        reinjectTimer = setTimeout(injectMenu, 200);
+    });
+    menuObserver.observe(document.body, { childList: true, subtree: true });
+
+
     // ============================================================
-    // 番号提取（v3.2.0 限制 1-20 后不能跟字母）
+    // 核心解析
     // ============================================================
     function extractFC2Part(str, fc2Num) {
         const s = String(str || '');
@@ -586,44 +622,50 @@
         s = s.replace(/\b(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b/g, ' ');
 
         let m = s.match(/\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})\b/i);
-        if (m) return { code: 'FC2-PPV-' + m[1], type: 'fc2', fc2Num: m[1] };
+        if (m) return { code: 'FC2-PPV-' + m[1], type: 'fc2', fc2Num: m[1], matchedStr: m[0] };
 
         m = s.match(/\bHEYDOUGA[-_\s]*(\d{4})[-_\s]+([A-Z0-9]+)\b/i);
-        if (m) return { code: 'HEYDOUGA-' + m[1] + '-' + m[2], type: 'heydouga' };
+        if (m) return { code: 'HEYDOUGA-' + m[1] + '-' + m[2], type: 'heydouga', matchedStr: m[0] };
 
         m = s.match(/\bGACHI[-_\s]*(\d{3,6})\b/i);
-        if (m) return { code: 'GACHI-' + m[1], type: 'gachi' };
+        if (m) return { code: 'GACHI-' + m[1], type: 'gachi', matchedStr: m[0] };
 
         m = s.match(/\bDUGA[-_\s]+([A-Z0-9]+[-_][A-Z0-9]+)\b/i);
-        if (m) return { code: 'DUGA-' + m[1].replace(/_/g, '-'), type: 'duga' };
+        if (m) return { code: 'DUGA-' + m[1].replace(/_/g, '-'), type: 'duga', matchedStr: m[0] };
 
         m = s.match(/\bMY[-_\s]?WIFE[-_\s]*(\d+)\b/i);
-        if (m) return { code: 'MYWIFE-' + m[1], type: 'mywife' };
+        if (m) return { code: 'MYWIFE-' + m[1], type: 'mywife', matchedStr: m[0] };
 
         m = s.match(/\bTOKYO[-_\s]?HOT[-_\s]*([A-Z0-9]+(?:[-_][A-Z0-9]+)?)\b/i);
-        if (m) return { code: 'Tokyo-Hot-' + m[1], type: 'tokyo-hot' };
+        if (m) return { code: 'Tokyo-Hot-' + m[1], type: 'tokyo-hot', matchedStr: m[0] };
 
         const sources = 'PACOPACOMAMA|PACO|10MUSUME|10MU|1PONDO|CARIBBEANCOM|CARIBBEAN|CARIB|HEYZO';
         m = s.match(new RegExp('\\b(' + sources + ')[-_\\s]*(\\d{6})[-_](\\d{2,3})\\b', 'i'));
-        if (m) return { code: m[2] + '_' + m[3] + '-' + m[1].toUpperCase(), type: 'uncensored' };
+        if (m) return { code: m[2] + '_' + m[3] + '-' + m[1].toUpperCase(), type: 'uncensored', matchedStr: m[0] };
         m = s.match(new RegExp('\\b(\\d{6})[-_](\\d{2,3})[-_\\s]*(' + sources + ')\\b', 'i'));
-        if (m) return { code: m[1] + '_' + m[2] + '-' + m[3].toUpperCase(), type: 'uncensored' };
+        if (m) return { code: m[1] + '_' + m[2] + '-' + m[3].toUpperCase(), type: 'uncensored', matchedStr: m[0] };
         m = s.match(/\b(\d{6})[-_](\d{2,3})(?=$|[^0-9])/);
-        if (m) return { code: m[1] + '_' + m[2], type: 'uncensored' };
+        if (m) return { code: m[1] + '_' + m[2], type: 'uncensored', matchedStr: m[0] };
 
         m = s.match(/\b(\d{3}[A-Z]{2,10})[-_\s](\d{2,6})\b/i);
-        if (m) return { code: m[1] + '-' + m[2], type: 'digit-prefix' };
+        if (m) return { code: m[1] + '-' + m[2], type: 'digit-prefix', matchedStr: m[0] };
 
-        const garbage = ['FULLHD', 'H264', 'H265', '1080P', '720P', 'PART', 'DISC', '10BIT'];
+        const garbage = ['FULLHD', 'H264', 'H265', '1080P', '720P', 'PART', 'DISC', '10BIT', 'HHB', 'HHC', 'HHD', 'HHH'];
 
         m = s.match(/\b([A-Z]{2,15})[-_\s](\d{2,10})[-_](\d{1,3})(?=$|[^0-9])/i);
-        if (m && garbage.indexOf(m[1].toUpperCase()) === -1) return { code: m[1].toUpperCase() + '-' + m[2] + '-' + m[3], type: 'standard' };
+        if (m && garbage.indexOf(m[1].toUpperCase()) === -1) return { code: m[1].toUpperCase() + '-' + m[2] + '-' + m[3], type: 'standard', matchedStr: m[0] };
 
         m = s.match(/\b([A-Z]{2,15})[-_\s](\d{2,10})(?=$|[^0-9])/i);
-        if (m && garbage.indexOf(m[1].toUpperCase()) === -1) return { code: m[1].toUpperCase() + '-' + m[2], type: 'standard' };
+        if (m && garbage.indexOf(m[1].toUpperCase()) === -1) {
+            const num = m[2].replace(/^0+(?=\d{3})/, '');
+            return { code: m[1].toUpperCase() + '-' + num, type: 'standard', matchedStr: m[0] };
+        }
 
         m = s.match(/\b([A-Z]{2,10})(\d{3,6})\b/i);
-        if (m && garbage.indexOf(m[1].toUpperCase()) === -1) return { code: m[1].toUpperCase() + '-' + m[2], type: 'compact' };
+        if (m && garbage.indexOf(m[1].toUpperCase()) === -1) {
+            const num = m[2].replace(/^0+(?=\d{3})/, '');
+            return { code: m[1].toUpperCase() + '-' + num, type: 'compact', matchedStr: m[0] };
+        }
         return null;
     }
 
@@ -649,13 +691,13 @@
         for (let i = 0; i < CODE_PREFIX_PATTERNS.length; i++) {
             const item = CODE_PREFIX_PATTERNS[i];
             const m = str.match(item.regex);
-            if (m) return item.prefix + '-' + (m[1] === '0' ? '0' : m[1]).padStart(3, '0');
+            if (m) return { code: item.prefix + '-' + (m[1] === '0' ? '0' : m[1]).padStart(3, '0'), matchedStr: m[0] };
         }
         const loose = str.match(/\b([A-Z]{2,8})\s*0*(\d{2,5})(?![0-9])/);
         if (loose && GARBAGE_WORDS.indexOf(loose[1]) === -1 && loose[1].length > 1) {
             let num = Number(loose[2]).toString();
             if (num === '0') num = '0';
-            return loose[1] + '-' + num.padStart(3, '0');
+            return { code: loose[1] + '-' + num.padStart(3, '0'), matchedStr: loose[0] };
         }
         return null;
     }
@@ -686,9 +728,6 @@
         return s;
     }
 
-    // ============================================================
-    // 核心解析（v3.2.0 清理链）
-    // ============================================================
     const parseVideoInfo = (origTitle, safeSuffix) => {
         try {
             if (!origTitle) return null;
@@ -696,6 +735,7 @@
             raw = stripDomainPrefix(raw);
             let rawForCode = safeSuffix ? raw.slice(0, raw.lastIndexOf(safeSuffix)) : raw;
 
+            // 1. 提取标记
             const markers = [];
             rawForCode.replace(MARKER_PATTERN, (m, p1, offset, full) => {
                 if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(m)) {
@@ -708,6 +748,7 @@
                 return m;
             });
 
+            // 2. 提取日期
             let dateStr = '';
             const dm = rawForCode.match(/(?:\b|_|^|@|】|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i);
             if (dm) {
@@ -719,84 +760,86 @@
                 rawForCode = rawForCode.replace(dm[0], ' ');
             }
 
-            const extracted = extractJavCode(rawForCode);
-            let queryCode = null, displayCode = null, part = '';
+            // 3. 强力预清洗，防止帧率、画质后缀干扰番号识别
+            let cleanForCode = rawForCode;
+            cleanForCode = cleanForCode.replace(/[-_.\s]*hh[bcdh]\d*/gi, ' ');
+            cleanForCode = cleanForCode.replace(/[-_.\s]*(?:4k|4ks|8k|2160p|1080p|720p)?\s*(?:60|120|30)\s*fps/gi, ' ');
+            cleanForCode = cleanForCode.replace(/[-_.\s]*\b(?:4k|8k|2160p|1080p|720p)\b/gi, ' ');
+            cleanForCode = cleanForCode.replace(/\s+/g, ' ').trim();
 
-            if (extracted) {
-                queryCode = extracted.code;
-                displayCode = extracted.code;
-
-                if (extracted.type === 'fc2') {
-                    part = extractFC2Part(rawForCode, extracted.fc2Num);
-                    const cleanup = new RegExp('(?:fc2?[-_\\s]*(?:ppv[-_\\s]*)?|ppv[-_\\s]*)0*' + extracted.fc2Num + '(?:[-_.\\s\\[\\](){}]*(?:sp[-_.\\s]*0*\\d{0,3}|cd[-_.\\s]*0*\\d{1,3}|part[-_.\\s]*0*\\d{1,3}|\\d{1,3}|[a-d]))?', 'i');
-                    rawForCode = rawForCode.replace(cleanup, ' ');
-                } else if (extracted.type === 'tokyo-hot') {
-                    if (markers.indexOf('无码') === -1) markers.push('无码');
-                    const cleanup = new RegExp(escapeRegExp(extracted.code).replace(/-/g, '[-_\\s]?') + '(?:[-_\\s]*[nN]?\\d+)?', 'i');
-                    rawForCode = rawForCode.replace(cleanup, ' ');
-                } else if (extracted.type === 'uncensored') {
-                    if (markers.indexOf('无码') === -1) markers.push('无码');
-                    part = extractPart(rawForCode, extracted.code);
-                    const cleanup = new RegExp(escapeRegExp(extracted.code).replace(/_/g, '[-_]').replace(/-/g, '[-_\\s]?'), 'i');
-                    rawForCode = rawForCode.replace(cleanup, ' ');
-                } else {
-                    const cleanPattern = new RegExp(escapeRegExp(extracted.code).replace(/-/g, '[-_\\s.]?') + '(?![0-9])', 'i');
-                    const discMatch = extracted.code.match(/^([A-Z0-9]+)-(\d+)-(\d+)$/);
-                    if (discMatch) {
-                        queryCode = discMatch[1] + '-' + discMatch[2];
-                        displayCode = queryCode;
-                        part = discMatch[3];
-                    } else {
-                        part = extractPart(rawForCode, extracted.code);
-                    }
-                    rawForCode = rawForCode.replace(cleanPattern, ' ');
-                }
+            // 4. 提取分段
+            let part = '';
+            const partMatch = cleanForCode.match(/(?:^|[^A-Za-z0-9])(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\s\[\](){}]*0*(\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])/i);
+            if (partMatch) {
+                part = partMatch[1];
             } else {
-                const t = removeMarkers(rawForCode).toUpperCase().replace(/[\[\]\{\}（）【】]/g, ' ').replace(/[_\.\-\/\\]+/g, ' ');
-                const backup = matchCodeByPrefix(t);
+                // 如果找不到，用原始字符串再找一次（应对某些奇怪格式）
+                const rawPartMatch = rawForCode.match(/(?:^|[^A-Za-z0-9])(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\s\[\](){}]*0*(\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])/i);
+                if (rawPartMatch) part = rawPartMatch[1];
+            }
+
+            // 5. 提取番号
+            let queryCode = null, displayCode = null;
+            const extracted = extractJavCode(cleanForCode);
+            if (extracted) {
+                queryCode = normalize115Name(extracted.code);
+                displayCode = queryCode;
+
+                // 用极其宽容的正则抹去原串中的番号残留，绝不影响其他信息
+                const rawMatchStr = extracted.matchedStr || extracted.code;
+                let cleanPattern;
+                const prefix = rawMatchStr.split(/[-_ ]/)[0].replace(/[^A-Z0-9]/gi, '');
+                const num = rawMatchStr.replace(prefix, '').replace(/[^0-9]/g, '').replace(/^0+/, '');
+                if (prefix && num) {
+                    cleanPattern = new RegExp(`\\b${prefix}[-_.\\s]*0*${num}(?![0-9])`, 'i');
+                } else {
+                    cleanPattern = new RegExp(escapeRegExp(rawMatchStr).replace(/-/g, '[-_\\s.]?') + '(?![0-9])', 'i');
+                }
+                cleanForCode = cleanForCode.replace(cleanPattern, ' ');
+            } else {
+                const backup = matchCodeByPrefix(cleanForCode);
                 if (backup) {
-                    queryCode = backup;
-                    displayCode = backup;
-                    const cleanPattern = new RegExp(escapeRegExp(queryCode).replace(/-/g, '[-_\\s.]?'), 'i');
-                    const rawMatch = rawForCode.match(cleanPattern);
-                    if (rawMatch) rawForCode = rawForCode.replace(rawMatch[0], ' ');
-                    part = extractPart(rawForCode, queryCode);
+                    queryCode = backup.code;
+                    displayCode = backup.code;
+                    const cleanPattern = new RegExp(escapeRegExp(backup.matchedStr).replace(/-/g, '[-_\\s.]?'), 'i');
+                    cleanForCode = cleanForCode.replace(cleanPattern, ' ');
                 }
             }
 
             if (!queryCode) return null;
             const baseCode = displayCode || queryCode;
 
-            if (checkUncensored(baseCode, raw) && markers.indexOf('无码') === -1) markers.push('无码');
+            if (checkUncensored(baseCode, rawForCode) && markers.indexOf('无码') === -1) markers.push('无码');
 
             const safeB = queryCode.replace(/_/g, '-').replace(/-/g, '[-_ ]?');
-            if (raw.indexOf('中文') !== -1 || new RegExp(safeB + '[_-](UC|C)\\b', 'i').test(raw)) {
+            if (rawForCode.indexOf('中文') !== -1 || new RegExp(safeB + '[_-](UC|C)\\b', 'i').test(rawForCode)) {
                 if (markers.indexOf('中文字幕') === -1) markers.push('中文字幕');
             }
-            if (raw.indexOf('无码') !== -1 || new RegExp(safeB + '[_-](UC|U)\\b', 'i').test(raw)) {
+            if (rawForCode.indexOf('无码') !== -1 || new RegExp(safeB + '[_-](UC|U)\\b', 'i').test(rawForCode)) {
                 if (markers.indexOf('无码') === -1) markers.push('无码');
             }
 
             let finalPart = part;
             if (finalPart) {
                 finalPart = String(finalPart).toLowerCase();
-                if (/^\d+$/.test(finalPart) && loadSettings().useCdPrefix) finalPart = 'cd' + finalPart;
+                const segPref = loadSettings().segmentPrefix;
+                if (/^\d+$/.test(finalPart) && segPref) finalPart = segPref + finalPart;
             }
             const fullCode = finalPart ? baseCode + '-' + finalPart : baseCode;
 
-            // ★ v3.2.0：title 清理全链路
+            // 6. 清理标题
             const garbageRegex = new RegExp('\\b(' + GARBAGE_WORDS.join('|') + ')\\b', 'gi');
-            let cleanTitle = removeMarkers(rawForCode);                    // 1. 删标记
-            cleanTitle = cleanTitle.replace(RESOLUTION_FPS_PATTERN, ' ');  // 2. 删分辨率/帧率
-            cleanTitle = cleanTitle.replace(garbageRegex, ' ');            // 3. 删编码/容器
-            cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' '); // 4. 删方括号
-            cleanTitle = cleanTitle.replace(AD_BADGES, ' ');               // 5. 删广告
-            cleanTitle = cleanTitle.replace(/(?:^|[\s_\-\.])(?:cd|part|pt|disc|vol|volume|ep|sp)(?=$|[\s_\-\.])/gi, ' '); // 6. 删孤立 part
-            cleanTitle = cleanTitle.replace(/[_\.]+/g, ' ');               // 7. 下划线/点→空格（保留短横线）
-            cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim();           // 8. 空白压缩
-            cleanTitle = removeCodeFromTitle(cleanTitle, baseCode);        // 9. 删番号
-            cleanTitle = cleanTitle.replace(/^[\s_\-\.]+|[\s_\-\.]+$/g, '').trim(); // 10. 首尾标点
-            if (isPunctOnly(cleanTitle)) cleanTitle = '';                  // 11. 纯标点判断
+            let cleanTitle = removeMarkers(cleanForCode);
+            cleanTitle = cleanTitle.replace(RESOLUTION_FPS_PATTERN, ' ');
+            cleanTitle = cleanTitle.replace(garbageRegex, ' ');
+            cleanTitle = cleanTitle.replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ');
+            cleanTitle = cleanTitle.replace(AD_BADGES, ' ');
+            cleanTitle = cleanTitle.replace(/(?:^|[\s_\-\.])(?:cd|part|pt|disc|vol|volume|ep|sp)(?=$|[\s_\-\.])/gi, ' ');
+            cleanTitle = cleanTitle.replace(/[_\.]+/g, ' ');
+            cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim();
+            cleanTitle = removeCodeFromTitle(cleanTitle, baseCode);
+            cleanTitle = cleanTitle.replace(/^[\s_\-\.]+|[\s_\-\.]+$/g, '').trim();
+            if (isPunctOnly(cleanTitle)) cleanTitle = '';
 
             return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
         } catch (e) {
@@ -805,9 +848,6 @@
         }
     };
 
-    // ============================================================
-    // 新名称构建
-    // ============================================================
     const buildNewName = (vInfo, info, suffix) => {
         if (!vInfo || !vInfo.fullCode) return '';
         const s = loadSettings();
@@ -864,9 +904,6 @@
         return sanitizeFileName(name);
     };
 
-    // ============================================================
-    // 手动命名保护
-    // ============================================================
     const isRawDownloadSiteName = fileName => {
         const base = stripFileExt(String(fileName || '')).replace(/\s+/g, '').toLowerCase();
         if (!base) return false;
@@ -910,7 +947,7 @@
     };
 
     // ============================================================
-    // 缓存
+    // 缓存与刮削源
     // ============================================================
     function getCache(k) { try { return JSON.parse(GM_getValue(k, '{}')); } catch (e) { return {}; } }
     function setCache(k, d) { GM_setValue(k, JSON.stringify(d)); }
@@ -933,9 +970,6 @@
     };
     const markNegativeCached = code => { negativeCache[code] = { cachedAt: Date.now() }; setCache('jb_negativeCache', negativeCache); };
 
-    // ============================================================
-    // 刮削源
-    // ============================================================
     const javbusBase = 'https://www.javbus.com/';
     const javbusUncensoredBase = javbusBase + 'uncensored/';
     const javlibSearchBase = 'https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=';
@@ -1182,6 +1216,62 @@
         });
     }
 
+    // 自定义源通用解析器（智能兼容有无横杠）
+    function fetchCustomSource(code, urlTemplate) {
+        const codeStr = String(code).toUpperCase();
+        const idStr = codeStr.replace(/[^A-Z0-9]/g, '');
+
+        const url1 = urlTemplate.replace(/\{code\}/gi, encodeURIComponent(codeStr)).replace(/\{id\}/gi, encodeURIComponent(idStr)).replace(/\{\}/g, encodeURIComponent(codeStr));
+        const url2 = urlTemplate.replace(/\{code\}/gi, encodeURIComponent(idStr)).replace(/\{id\}/gi, encodeURIComponent(codeStr)).replace(/\{\}/g, encodeURIComponent(idStr));
+
+        const urls = [...new Set([url1, url2])]; // 去重
+
+        const fetchOne = (url) => {
+            return gmRequest({ method: 'GET', url, anonymous: true, timeout: 15000 }).then(res => {
+                const doc = parseHTML(res.responseText);
+                let title = '';
+                let date = '';
+                let actresses = [];
+
+                const h1 = doc.querySelector('h2.title, .video-title, .entry-title, #video_title');
+                if (h1) title = h1.textContent.trim();
+                if (!title) {
+                    const t = doc.querySelector('title');
+                    if (t) title = t.textContent.trim();
+                }
+
+                title = title.replace(/ - .*?$/, '').trim();
+
+                const text = doc.body ? doc.body.textContent : '';
+                const dm = text.match(/(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/);
+                if (dm) date = normDate(dm[0]);
+
+                doc.querySelectorAll('a[href*="/star/"], a[href*="/actors/"], a[href*="actor"]').forEach(a => {
+                    const n = a.textContent.trim();
+                    if (n && !actresses.includes(n)) actresses.push(n);
+                });
+
+                if (!title) throw new Error('无法解析自定义源的标题');
+                return { title, date, actresses };
+            });
+        };
+
+        // 并发请求所有变体，只要有一个成功就返回
+        return new Promise((resolve, reject) => {
+            let pending = urls.length;
+            let failed = false;
+            urls.forEach(url => {
+                fetchOne(url).then(resolve).catch(() => {
+                    pending--;
+                    if (pending === 0 && !failed) {
+                        failed = true;
+                        reject(new Error('自定义源均请求失败'));
+                    }
+                });
+            });
+        });
+    }
+
     const SOURCE_REGISTRY = {
         javdb: fetchJavdb, javbus: fetchJavbus, javlibrary: fetchJavlib, xslist: fetchXslist,
         fc2ppvdb: fetchFC2PPVDB, missav: fetchMissavFC2, avsox: fetchAvsox, avmoo: fetchAvmoo
@@ -1192,12 +1282,26 @@
         if (isInfoCacheValid(key)) return Promise.resolve(infoCache[key]);
         if (isNegativeCached(key)) return Promise.reject(new Error('Negative'));
         const s = loadSettings();
-        const enabled = new Set(String(s.scrapeSources || '').split(',').map(x => x.trim()).filter(Boolean));
-        const isFc2 = /^FC2-PPV-\d{5,8}$/i.test(code);
-        const priority = isFc2 ? ['javdb', 'missav', 'fc2ppvdb'] : (isUncensored ? ['avsox', 'avmoo', 'javbus'] : ['javdb', 'javbus', 'javlibrary', 'xslist']);
-        const sources = priority.filter(k => enabled.has(k) && SOURCE_REGISTRY[k]).map(k => SOURCE_REGISTRY[k]);
-        if (!sources.length) return Promise.reject(new Error('No sources'));
-        const promises = sources.map(fn => fn(code).then(i => { storeInfo(key, i); return i; }).catch(() => null));
+
+        const order = String(s.sourceOrder || DEFAULT_SETTINGS.sourceOrder).split(',').map(x => x.trim()).filter(Boolean);
+        const enabled = new Set(String(s.scrapeSources || DEFAULT_SETTINGS.scrapeSources).split(',').map(x => x.trim()).filter(Boolean));
+        const customList = String(s.customSources || '').split(',').map(x => x.trim()).filter(Boolean);
+
+        const promises = [];
+
+        order.forEach(k => {
+            if (!enabled.has(k)) return;
+            if (k === 'custom') {
+                customList.forEach((url, idx) => {
+                    promises.push(fetchCustomSource(code, url).then(i => { storeInfo('custom_' + idx, i); return i; }).catch(() => null));
+                });
+            } else if (SOURCE_REGISTRY[k]) {
+                promises.push(SOURCE_REGISTRY[k](code).then(i => { storeInfo(k, i); return i; }).catch(() => null));
+            }
+        });
+
+        if (!promises.length) return Promise.reject(new Error('No sources'));
+
         return new Promise((resolve, reject) => {
             let settled = false;
             const check = () => {
@@ -1214,9 +1318,6 @@
         });
     }
 
-    // ============================================================
-    // 翻译
-    // ============================================================
     function translateTitleToChinese(title) {
         return new Promise(resolve => {
             const src = String(title || '').trim();
@@ -1248,9 +1349,6 @@
         });
     }
 
-    // ============================================================
-    // 改名主流程
-    // ============================================================
     async function getTargetName(vInfo, suffix) {
         const code = vInfo.queryCode;
         const key = code.toUpperCase();
@@ -1297,9 +1395,6 @@
         send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     }
 
-    // ============================================================
-    // 发送请求（原生 fetch）
-    // ============================================================
     let renameCompareList = [];
 
     function send_115(id, name, fh, origFilename, callback) {
@@ -1319,9 +1414,6 @@
         }).catch(() => { showPageNotification(fh + ' 请求失败', 'error', 3000); if (typeof callback === 'function') callback(); });
     }
 
-    // ============================================================
-    // 进度与通知（原生 DOM）
-    // ============================================================
     window.renameInProgress = false;
 
     function runTasksWithLimit(tasks, limit, intervalMs, doneAll) {
@@ -1391,9 +1483,6 @@
         show();
     };
 
-    // ============================================================
-    // 改名预览（独立 CSS 注入，适配暗黑模式）
-    // ============================================================
     function showRenamePreview(rows, onConfirm, onCancel) {
         const old = document.getElementById('rename-preview-overlay');
         if (old) old.remove();
@@ -1490,9 +1579,6 @@
         });
     }
 
-    // ============================================================
-    // 预览执行
-    // ============================================================
     function buildPreviewRows(parsedItems, isLocal, done) {
         if (isLocal) {
             const rows = parsedItems.map(item => {
@@ -1572,7 +1658,7 @@
 
         const execRename = rows => {
             if (!rows.length) { cancelRename(); return; }
-            progressBox.init(isLocal ? '本地番号加工' : '联网改名', rows.length);
+            progressBox.init(isLocal ? '本地番号规范' : '联网改名', rows.length);
             renameCompareList = [];
             let processed = 0;
             const tasks = rows.map(row => done => {
@@ -1593,9 +1679,6 @@
         }
     }
 
-    // ============================================================
-    // 备份/剪贴板
-    // ============================================================
     function offerCompareExport() {
         if (renameCompareList.length === 0) return;
         if (confirm('改名已完成，是否导出对比？')) {
@@ -1611,15 +1694,7 @@
         const text = list.map(i => `${i.original}\t${i.new}`).join('\n');
         copyToClipboard('【旧文件名】\t【新文件名】\n' + text);
     }
-    function backupFileNames() {
-        const selected = get115SelectedItems();
-        if (!selected.length) { showPageNotification('请先选中要备份的文件', 'info', 3000); return; }
-        const names = selected.map(i => i.fn).filter(Boolean);
-        if (!names.length) return;
-        const text = names.join('\n');
-        if (confirm('导出为 TXT 文件？\n（确定 = TXT，取消 = 复制到剪贴板）')) downloadTxt('115_File_Backup.txt', text);
-        else copyToClipboard(text);
-    }
+
     function downloadTxt(filename, text) {
         const blob = new Blob([text], { type: 'text/plain' });
         const a = document.createElement('a');
@@ -1635,9 +1710,6 @@
         } else { GM_setClipboard(text); showPageNotification('已复制', 'success', 3000); }
     }
 
-    // ============================================================
-    // 归档（原生 fetch）
-    // ============================================================
     let archiveRootCid = null, archiveRootName = null, archiveRootPath = '';
     function initArchiveRoot() {
         loadSettings();
@@ -1829,9 +1901,6 @@
         });
     }
 
-    // ============================================================
-    // 评分
-    // ============================================================
     function fetchRatingForCode(code) {
         return new Promise(resolve => {
             GM_xmlhttpRequest({
@@ -1926,155 +1995,390 @@
     }
 
     // ============================================================
-    // 设置面板
+    // 重构：紧凑版设置面板 (OLED 纯黑适配，无滑动，一屏展示)
     // ============================================================
     function openSettingsPanel() {
-        const old = document.getElementById('rename2026-settings');
+        const old = document.getElementById('rename2026-settings-shadow');
         if (old) old.remove();
+
         loadSettings();
         const s = SETTINGS;
-        const orderArr = String(s.fieldOrder).split(',').map(x => x.trim()).filter(Boolean);
-        const enabledSrc = new Set(String(s.scrapeSources).split(',').map(x => x.trim()).filter(Boolean));
-        const allSrc = ['javdb', 'javbus', 'javlibrary', 'xslist', 'fc2ppvdb', 'missav', 'avsox', 'avmoo'];
-        const srcLabels = { javdb: 'JavDB', javbus: 'JavBus', javlibrary: 'JavLibrary', xslist: 'Xslist', fc2ppvdb: 'FC2PPVDB', missav: 'MissAV', avsox: 'Avsox', avmoo: 'AVMoo' };
+        const fieldKeys = String(s.fieldOrder).split(',').map(x => x.trim()).filter(Boolean);
+        const sourceKeys = String(s.sourceOrder).split(',').map(x => x.trim()).filter(Boolean);
+        const enabledSrc = new Set(String(s.scrapeSources || '').split(',').map(x => x.trim()).filter(Boolean));
+        const customStr = String(s.customSources || '').trim();
+
+        const srcLabels = { javdb: 'JavDB', javbus: 'JavBus', javlibrary: 'JavLibrary', xslist: 'Xslist', fc2ppvdb: 'FC2PPVDB', missav: 'MissAV', avsox: 'Avsox', avmoo: 'AVMoo', custom: '自定义源' };
         const mv = s.menuVisibility || {};
 
-        const renderField = () => orderArr.map((key, i) => {
-            const def = FIELD_DEFINITIONS[key]; if (!def) return '';
+        const host = document.createElement('div');
+        host.id = 'rename2026-settings-shadow';
+        host.style.cssText = 'position:fixed;inset:0;z-index:10000070;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+        document.body.appendChild(host);
+
+        const shadow = host.attachShadow({ mode: 'open' });
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.classList.contains('dark') || document.body.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        const themeVars = isDark ? `
+            --bg: #000000;
+            --panel: #000000;
+            --text: #e5e5e5;
+            --text-muted: #888888;
+            --border: #333333;
+            --primary: #2563eb;
+            --hover: #1a1a1a;
+            --input-bg: #111111;
+            --input-border: #444444;
+        ` : `
+            --bg: #f8fafc;
+            --panel: #ffffff;
+            --text: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --primary: #2563eb;
+            --hover: #f1f5f9;
+            --input-bg: #ffffff;
+            --input-border: #cbd5e1;
+        `;
+
+        const style = document.createElement('style');
+        style.textContent = `
+            :host { ${themeVars} }
+            * { box-sizing: border-box; }
+            .rs-panel { width: 860px; height: 620px; max-width: 95vw; max-height: 90vh; background: var(--panel); border-radius: 10px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); display: flex; overflow: hidden; color: var(--text); border: 1px solid var(--border); font-family: -apple-system, sans-serif; }
+            .rs-sidebar { width: 160px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 12px 0; flex-shrink: 0; }
+            .rs-logo { font-size: 15px; font-weight: bold; padding: 0 16px 12px; color: var(--primary); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+            .rs-nav-btn { display: block; width: 100%; text-align: left; padding: 8px 16px; border: none; background: transparent; color: var(--text); font-size: 13px; cursor: pointer; outline: none; }
+            .rs-nav-btn:hover { background: var(--hover); }
+            .rs-nav-btn.active { background: var(--primary); color: #fff; font-weight: 500; }
+            
+            .rs-sidebar-footer { margin-top: auto; padding: 12px 16px; font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 6px; }
+            .rs-sidebar-footer a { color: var(--primary); text-decoration: none; display: flex; align-items: center; gap: 4px; }
+            .rs-sidebar-footer a:hover { text-decoration: underline; }
+
+            .rs-content { flex: 1; padding: 20px 24px; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+            .rs-header { font-size: 14px; font-weight: 600; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+            .rs-section { display: none; flex-direction: column; gap: 12px; flex: 1; }
+            .rs-section.active { display: flex; }
+            
+            .rs-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+            
+            .rs-row { display: flex; align-items: center; background: var(--bg); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); min-width: 0; overflow: hidden; }
+            .rs-label { font-size: 13px; white-space: nowrap; flex: 1; }
+            .rs-input { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); border-radius: 4px; padding: 4px 6px; font-size: 12px; outline: none; min-width: 0; flex-shrink: 0; }
+            .rs-input:focus { border-color: var(--primary); }
+            .rs-input[type="number"] { width: 60px; text-align: center; }
+            .rs-input[type="text"] { width: 80px; }
+            .rs-checkbox { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; margin: 0; }
+
+            .drag-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+            .drag-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); min-width: 0; }
+            .drag-item.dragging { opacity: 0.5; border-style: dashed; border-color: var(--primary); }
+            .drag-item.is-required { opacity: 0.7; cursor: default; }
+            .drag-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+            .drag-handle { color: var(--text-muted); font-size: 16px; user-select: none; padding: 0 4px; cursor: grab; flex-shrink: 0; }
+
+            .rs-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; border-top: 1px solid var(--border); padding-top: 12px; flex-shrink: 0; }
+            .rs-btn { padding: 5px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: 1px solid transparent; font-weight: 500; }
+            .rs-btn-primary { background: var(--primary); color: #fff; }
+            .rs-btn-primary:hover { opacity: 0.9; }
+            .rs-btn-default { background: transparent; border-color: var(--border); color: var(--text); }
+            .rs-btn-default:hover { background: var(--hover); }
+        `;
+
+        let fieldListHtml = '';
+        fieldKeys.forEach((key) => {
+            const def = FIELD_DEFINITIONS[key]; if (!def) return;
             const checked = def.fixed || (s[def.settingKey] !== false);
             const dis = def.fixed;
-            return `
-            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;margin-bottom:6px;">
-                <span style="flex:0 0 26px;color:#94a3b8;font-weight:600;">${i + 1}.</span>
-                <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:${dis ? 'default' : 'pointer'};">
-                    <input type="checkbox" data-field-enable="${key}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}>
-                    <span style="font-size:13px;">${def.label}</span>${def.fixed ? '<span style="font-size:11px;color:#94a3b8;">(必需)</span>' : ''}
-                </label>
-                <button type="button" data-field-up="${key}" ${i === 0 ? 'disabled' : ''} style="padding:3px 9px;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;">↑</button>
-                <button type="button" data-field-down="${key}" ${i === orderArr.length - 1 ? 'disabled' : ''} style="padding:3px 9px;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;">↓</button>
-            </div>`;
-        }).join('');
+            fieldListHtml += `
+                <div class="drag-item ${key === 'code' ? 'is-required' : ''}" data-key="${key}">
+                    <div class="drag-left">
+                        <input type="checkbox" class="rs-checkbox" data-field-enable="${key}" ${checked ? 'checked' : ''} ${dis ? 'disabled' : ''}>
+                        <span class="rs-label">${def.label}</span>
+                    </div>
+                    <div class="drag-handle">≡</div>
+                </div>
+            `;
+        });
 
-        const overlay = document.createElement('div');
-        overlay.id = 'rename2026-settings';
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999999;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
-        overlay.innerHTML = `
-        <div style="width:min(760px,calc(100vw - 32px));max-height:90vh;background:#fff;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;color:#1f2937;">
-            <div style="padding:14px 20px;background:linear-gradient(135deg,#1a6dff,#1890ff);color:#fff;display:flex;justify-content:space-between;align-items:center;">
-                <h3 style="margin:0;font-size:16px;">115Rename 设置 · v${SCRIPT_VERSION}</h3>
-                <button id="rs-close" style="background:transparent;border:0;color:#fff;font-size:22px;cursor:pointer;">×</button>
-            </div>
-            <div style="padding:16px 20px;overflow:auto;flex:1;">
-                <div style="margin-bottom:20px;">
-                    <h4 style="margin:0 0 8px;font-size:14px;">字段顺序与开关</h4>
-                    <div id="rs-field-list">${renderField()}</div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
-                    <label><span style="font-size:12px;">字段分隔符</span><input type="text" id="rs-field-sep" value="${escapeHtml(s.fieldSeparator)}" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
-                    <label><span style="font-size:12px;">日期前缀</span><input type="text" id="rs-date-prefix" value="${escapeHtml(s.datePrefix)}" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
-                    <label><span style="font-size:12px;">女优分隔符</span><input type="text" id="rs-actress-sep" value="${escapeHtml(s.actressSeparator)}" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
-                    <label><span style="font-size:12px;">并发数</span><input type="number" id="rs-rename-concurrency" value="${s.renameConcurrency}" min="1" max="10" style="width:100%;height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:6px;"></label>
-                </div>
-                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">选项</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-translate" ${s.translateChinese ? 'checked' : ''}><span style="font-size:13px;">翻译中文标题</span></label>
-                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-enable-markers" ${s.enableMarkers ? 'checked' : ''}><span style="font-size:13px;">附加【】标记</span></label>
-                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-protect-manual" ${s.protectManualName ? 'checked' : ''}><span style="font-size:13px;">保护手动命名</span></label>
-                    <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;"><input type="checkbox" id="rs-cd-prefix" ${s.useCdPrefix ? 'checked' : ''}><span style="font-size:13px;">分段用 cd 前缀</span></label>
-                </div></div>
-                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">右键菜单</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-                    ${MENU_ITEMS.map(it => `<label style="display:flex;align-items:center;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;font-size:12px;"><input type="checkbox" data-menu-vis="${it.key}" ${mv[it.key] !== false ? 'checked' : ''}><span>${it.label}</span></label>`).join('')}
-                </div></div>
-                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">刮削源</h4><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
-                    ${allSrc.map(k => `<label style="display:flex;align-items:center;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;font-size:12px;"><input type="checkbox" data-source="${k}" ${enabledSrc.has(k) ? 'checked' : ''}><span>${srcLabels[k]}</span></label>`).join('')}
-                </div></div>
-                <div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-size:14px;">归档根目录</h4>
-                    <p style="margin:0 0 8px;font-size:12px;color:#64748b;">当前：${archiveRootCid ? '「' + escapeHtml(archiveRootPath || archiveRootName) + '」' : '未设置'}</p>
-                    <div style="display:flex;gap:8px;"><input type="text" id="rs-archive-path" value="${escapeHtml(s.archiveRootPath || '')}" placeholder="/归档" style="flex:1;height:34px;padding:0 10px;border:1px solid #cbd5e1;border-radius:6px;">
-                    <button id="rs-archive-apply" style="padding:7px 14px;border:0;background:#1a6dff;color:#fff;border-radius:6px;cursor:pointer;">解析</button></div>
-                    <button id="rs-clear-archive-root" style="margin-top:8px;padding:6px 14px;border:1px solid #fca5a5;background:#fff1f2;color:#b91c1c;border-radius:6px;cursor:pointer;font-size:12px;">清除</button>
+        const wrapper = document.createElement('div');
+        wrapper.className = 'rs-panel';
+        wrapper.innerHTML = `
+            <div class="rs-sidebar">
+                <div class="rs-logo">115Rename</div>
+                <button class="rs-nav-btn active" data-target="tab-common">通用</button>
+                <button class="rs-nav-btn" data-target="tab-menu">右键菜单</button>
+                <button class="rs-nav-btn" data-target="tab-sources">刮削源</button>
+                <div class="rs-sidebar-footer">
+                    <a href="https://github.com/liuchanghuaX1/115Rename2026" target="_blank">⭐ GitHub</a>
+                    <span>版本 v${SCRIPT_VERSION}</span>
                 </div>
             </div>
-            <div style="padding:12px 20px;border-top:1px solid #eee;background:#fafafa;display:flex;justify-content:space-between;">
-                <button id="rs-reset" style="padding:7px 14px;border:1px solid #fca5a5;background:#fff1f2;color:#b91c1c;border-radius:6px;cursor:pointer;">恢复默认</button>
-                <div><button id="rs-cancel" style="padding:7px 18px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;margin-right:8px;">取消</button>
-                <button id="rs-save" style="padding:7px 20px;border:0;background:#1a6dff;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;">保存</button></div>
-            </div>
-        </div>`;
-        document.body.appendChild(overlay);
+            <div class="rs-content">
+                <div id="tab-common" class="rs-section active">
+                    <div class="rs-header">字段顺序与开关</div>
+                    <div class="drag-list" id="rs-field-list">${fieldListHtml}</div>
+                    
+                    <div class="rs-header" style="margin-top: 8px;">常规设置</div>
+                    <div class="rs-grid-2">
+                        <div class="rs-row">
+                            <span class="rs-label">字段分隔符</span>
+                            <input class="rs-input" type="text" id="rs-field-sep" value="${escapeHtml(s.fieldSeparator)}">
+                        </div>
+                        <div class="rs-row">
+                            <span class="rs-label">日期前缀</span>
+                            <input class="rs-input" type="text" id="rs-date-prefix" value="${escapeHtml(s.datePrefix)}">
+                        </div>
+                        <div class="rs-row">
+                            <span class="rs-label">演员分隔符</span>
+                            <input class="rs-input" type="text" id="rs-actress-sep" value="${escapeHtml(s.actressSeparator)}">
+                        </div>
+                        <div class="rs-row">
+                            <span class="rs-label">分段标记</span>
+                            <input class="rs-input" type="text" id="rs-segment-prefix" value="${escapeHtml(s.segmentPrefix || '')}">
+                        </div>
+                        <div class="rs-row">
+                            <span class="rs-label">并发数</span>
+                            <input class="rs-input" type="number" id="rs-rename-concurrency" value="${s.renameConcurrency}" min="1" max="10">
+                        </div>
+                        <div class="rs-row">
+                            <span class="rs-label">常规选项</span>
+                            <div style="display:flex; gap: 16px; align-items:center;">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                    <input class="rs-checkbox" type="checkbox" id="rs-protect-manual" ${s.protectManualName ? 'checked' : ''}>
+                                    <span class="rs-label">保护命名</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                    <input class="rs-checkbox" type="checkbox" id="rs-enable-markers" ${s.enableMarkers ? 'checked' : ''}>
+                                    <span class="rs-label">附加标记</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
 
-        const refresh = () => { overlay.querySelector('#rs-field-list').innerHTML = renderField(); bind(); };
-        function bind() {
-            overlay.querySelectorAll('[data-field-up]').forEach(b => {
-                b.onclick = () => { const k = b.dataset.fieldUp; const i = orderArr.indexOf(k); if (i <= 0) return; const t = orderArr[i - 1]; orderArr[i - 1] = orderArr[i]; orderArr[i] = t; refresh(); };
+                    <div class="rs-header" style="margin-top: 8px;">归档根目录</div>
+                    <div style="display:flex; gap:8px;">
+                        <input class="rs-input" style="flex:1; width:auto;" type="text" id="rs-archive-path" value="${escapeHtml(s.archiveRootPath || '')}" placeholder="/归档">
+                        <button class="rs-btn rs-btn-primary" id="rs-archive-apply">解析</button>
+                        <button class="rs-btn rs-btn-default" id="rs-clear-archive-root" style="color:#ef4444; border-color:#fca5a5;">清除</button>
+                    </div>
+                    <p style="margin:0;font-size:12px;color:var(--text-muted);">当前：${archiveRootCid ? '「' + escapeHtml(archiveRootPath || archiveRootName) + '」' : '未设置'}</p>
+                </div>
+
+                <div id="tab-menu" class="rs-section">
+                    <div class="rs-header">右键菜单开关</div>
+                    <div class="drag-list">
+                        ${MENU_ITEMS.map(it => `
+                            <div class="drag-item">
+                                <div class="drag-left">
+                                    <input class="rs-checkbox" type="checkbox" data-menu-vis="${it.key}" ${mv[it.key] !== false ? 'checked' : ''}>
+                                    <span class="rs-label">${it.label}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div id="tab-sources" class="rs-section">
+                    <div class="rs-header">刮削源排序与开关</div>
+                    <div class="drag-list" id="rs-source-list">
+                        <!-- JS 渲染所有源 -->
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">
+                            自定义源（使用 <b>{}</b> 代表番号。会同时兼容有-和无-的请求。多个网址用英文 , 分隔）
+                        </div>
+                        <textarea id="rs-custom-sources" class="rs-input" style="width: 100%; height: 60px; resize: none;" placeholder="如: https://www.google.com/search?q={}">${escapeHtml(s.customSources || '')}</textarea>
+                    </div>
+                </div>
+
+                <div class="rs-footer">
+                    <button class="rs-btn rs-btn-default" id="rs-reset">恢复默认</button>
+                    <button class="rs-btn rs-btn-default" id="rs-cancel">取消</button>
+                    <button class="rs-btn rs-btn-primary" id="rs-save">保存</button>
+                </div>
+            </div>
+        `;
+        shadow.appendChild(style);
+        shadow.appendChild(wrapper);
+
+        // --- 事件绑定 ---
+        const navBtns = shadow.querySelectorAll('.rs-nav-btn');
+        const sections = shadow.querySelectorAll('.rs-section');
+        navBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                navBtns.forEach(b => b.classList.remove('active'));
+                sections.forEach(sec => sec.classList.remove('active'));
+                btn.classList.add('active');
+                shadow.getElementById(btn.dataset.target).classList.add('active');
             });
-            overlay.querySelectorAll('[data-field-down]').forEach(b => {
-                b.onclick = () => { const k = b.dataset.fieldDown; const i = orderArr.indexOf(k); if (i < 0 || i >= orderArr.length - 1) return; const t = orderArr[i]; orderArr[i] = orderArr[i + 1]; orderArr[i + 1] = t; refresh(); };
+        });
+
+        // 通用 Pointer Drag 逻辑
+        function initPointerDrag(container) {
+            let draggedItem = null;
+            let placeholder = null;
+            let startY = 0;
+            let initialRect = null;
+
+            container.addEventListener('pointerdown', e => {
+                const handle = e.target.closest('.drag-handle');
+                const item = e.target.closest('.drag-item');
+                if (!handle || !item || item.classList.contains('is-required')) return;
+
+                e.preventDefault();
+                draggedItem = item;
+                item.classList.add('dragging');
+                initialRect = item.getBoundingClientRect();
+
+                placeholder = document.createElement('div');
+                placeholder.style.width = `${initialRect.width}px`;
+                placeholder.style.height = `${initialRect.height}px`;
+                item.parentNode.insertBefore(placeholder, item);
+
+                item.style.position = 'fixed';
+                item.style.left = `${initialRect.left}px`;
+                item.style.top = `${initialRect.top}px`;
+                item.style.width = `${initialRect.width}px`;
+                item.style.zIndex = '99999';
+                item.style.pointerEvents = 'none';
+
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onUp, { once: true });
             });
+
+            function onMove(e) {
+                if (!draggedItem) return;
+                const y = e.clientY;
+                draggedItem.style.top = `${y - initialRect.height / 2}px`;
+
+                const items = [...container.querySelectorAll('.drag-item:not(.dragging)')];
+                const target = items.find(item => {
+                    const rect = item.getBoundingClientRect();
+                    return y >= rect.top && y <= rect.bottom;
+                });
+
+                if (target) {
+                    const rect = target.getBoundingClientRect();
+                    const isAfter = y > rect.top + rect.height / 2;
+                    if (isAfter) {
+                        container.insertBefore(placeholder, target.nextSibling);
+                    } else {
+                        container.insertBefore(placeholder, target);
+                    }
+                }
+            }
+
+            function onUp() {
+                if (draggedItem) {
+                    draggedItem.style.position = '';
+                    draggedItem.style.left = '';
+                    draggedItem.style.top = '';
+                    draggedItem.style.width = '';
+                    draggedItem.style.zIndex = '';
+                    draggedItem.style.pointerEvents = '';
+                    draggedItem.classList.remove('dragging');
+
+                    placeholder.parentNode.insertBefore(draggedItem, placeholder);
+                    placeholder.remove();
+                    placeholder = null;
+                    draggedItem = null;
+                }
+                document.removeEventListener('pointermove', onMove);
+            }
         }
-        bind();
 
-        overlay.querySelector('#rs-close').onclick = () => overlay.remove();
-        overlay.querySelector('#rs-cancel').onclick = () => overlay.remove();
-        overlay.querySelector('#rs-archive-apply').onclick = async function () {
-            const p = overlay.querySelector('#rs-archive-path').value.trim();
+        // 字段排序
+        const fieldList = shadow.getElementById('rs-field-list');
+        initPointerDrag(fieldList);
+
+        // 刮削源列表
+        const srcListEl = shadow.getElementById('rs-source-list');
+        const renderSources = () => {
+            srcListEl.innerHTML = sourceKeys.map((key) => `
+                <div class="drag-item" data-key="${key}">
+                    <div class="drag-left">
+                        <input type="checkbox" class="rs-checkbox" data-source-enable="${key}" ${enabledSrc.has(key) ? 'checked' : ''}>
+                        <span class="rs-label">${srcLabels[key] || key}</span>
+                    </div>
+                    <div class="drag-handle">≡</div>
+                </div>
+            `).join('');
+        };
+        renderSources();
+        initPointerDrag(srcListEl);
+
+        // 修复按钮绑定
+        shadow.getElementById('rs-cancel').onclick = () => host.remove();
+
+        shadow.getElementById('rs-archive-apply').onclick = async function () {
+            const p = shadow.getElementById('rs-archive-path').value.trim();
             if (!p) { alert('请输入路径'); return; }
             const b = this; b.disabled = true; b.textContent = '...';
             try {
                 const r = await resolveArchiveRootByPath(p);
                 archiveRootCid = r.cid; archiveRootName = r.name; archiveRootPath = r.path;
                 saveSettings({ archiveRootCid: r.cid, archiveRootName: r.name, archiveRootPath: r.path });
-                alert('已保存：' + r.path); overlay.remove(); cleanupRootInfo(); showRootInfo();
+                alert('已保存：' + r.path); host.remove(); cleanupRootInfo(); showRootInfo();
             } catch (e) { alert('失败：' + (e.message || e)); }
             finally { b.disabled = false; b.textContent = '解析'; }
         };
-        overlay.querySelector('#rs-clear-archive-root').onclick = () => {
+
+        shadow.getElementById('rs-clear-archive-root').onclick = () => {
             if (!confirm('清除？')) return;
             archiveRootCid = null; archiveRootName = null; archiveRootPath = '';
             saveSettings({ archiveRootCid: null, archiveRootName: null, archiveRootPath: '' });
-            showPageNotification('已清除', 'info', 2000); overlay.remove(); cleanupRootInfo(); showRootInfo();
+            showPageNotification('已清除', 'info', 2000); host.remove(); cleanupRootInfo(); showRootInfo();
         };
-        overlay.querySelector('#rs-reset').onclick = () => {
+
+        shadow.getElementById('rs-reset').onclick = () => {
             if (!confirm('恢复默认？（保留归档根目录）')) return;
             const keep = { archiveRootCid: SETTINGS.archiveRootCid, archiveRootName: SETTINGS.archiveRootName, archiveRootPath: SETTINGS.archiveRootPath };
             GM_setValue('rename2026_settings', '{}'); SETTINGS = null;
             if (keep.archiveRootCid) saveSettings(keep);
-            overlay.remove(); showPageNotification('已恢复默认', 'success', 2000);
+            host.remove(); showPageNotification('已恢复默认', 'success', 2000);
         };
-        overlay.querySelector('#rs-save').onclick = () => {
+
+        shadow.getElementById('rs-save').onclick = () => {
             const em = {};
             ['title', 'zhTitle', 'actresses', 'date'].forEach(k => {
-                const el = overlay.querySelector(`[data-field-enable="${k}"]`);
+                const el = shadow.querySelector(`[data-field-enable="${k}"]`);
                 if (el) em['enable' + k.charAt(0).toUpperCase() + k.slice(1)] = el.checked;
             });
-            const src = [];
-            overlay.querySelectorAll('[data-source]').forEach(cb => { if (cb.checked) src.push(cb.dataset.source); });
             const mv2 = {};
-            overlay.querySelectorAll('[data-menu-vis]').forEach(cb => { mv2[cb.dataset.menuVis] = cb.checked; });
+            shadow.querySelectorAll('[data-menu-vis]').forEach(cb => { mv2[cb.dataset.menuVis] = cb.checked; });
+
+            const newOrder = Array.from(fieldList.querySelectorAll('.drag-item')).map(el => el.dataset.key).join(',');
+
+            const newSrcOrder = Array.from(srcListEl.querySelectorAll('.drag-item')).map(el => el.dataset.key).join(',');
+            const newEnabledSrc = [];
+            shadow.querySelectorAll('[data-source-enable]').forEach(cb => { if (cb.checked) newEnabledSrc.push(cb.dataset.sourceEnable); });
+
             const upd = {
-                fieldOrder: orderArr.join(','),
-                fieldSeparator: overlay.querySelector('#rs-field-sep').value || ' ',
-                datePrefix: overlay.querySelector('#rs-date-prefix').value,
-                actressSeparator: overlay.querySelector('#rs-actress-sep').value || '・',
+                fieldOrder: newOrder,
+                fieldSeparator: shadow.getElementById('rs-field-sep').value || ' ',
+                datePrefix: shadow.getElementById('rs-date-prefix').value,
+                actressSeparator: shadow.getElementById('rs-actress-sep').value || '・',
                 enableTitle: em.enableTitle !== false,
                 enableZhTitle: em.enableZhTitle === true,
                 enableActresses: em.enableActresses !== false,
                 enableDate: em.enableDate !== false,
-                enableMarkers: overlay.querySelector('#rs-enable-markers').checked,
-                translateChinese: overlay.querySelector('#rs-translate').checked,
-                protectManualName: overlay.querySelector('#rs-protect-manual').checked,
-                useCdPrefix: overlay.querySelector('#rs-cd-prefix').checked,
-                renameConcurrency: Math.max(1, Math.min(10, parseInt(overlay.querySelector('#rs-rename-concurrency').value, 10) || 3)),
-                scrapeSources: src.join(','), menuVisibility: mv2
+                enableMarkers: shadow.getElementById('rs-enable-markers').checked,
+                protectManualName: shadow.getElementById('rs-protect-manual').checked,
+                segmentPrefix: shadow.getElementById('rs-segment-prefix').value,
+                renameConcurrency: Math.max(1, Math.min(10, parseInt(shadow.getElementById('rs-rename-concurrency').value, 10) || 3)),
+                sourceOrder: newSrcOrder,
+                scrapeSources: newEnabledSrc.join(','),
+                customSources: shadow.getElementById('rs-custom-sources').value.trim(),
+                menuVisibility: mv2
             };
             saveSettings(upd);
             showPageNotification('已保存', 'success', 2000);
-            overlay.remove();
+            host.remove();
         };
     }
 
-    // ============================================================
-    // 归档根目录提示
-    // ============================================================
     const rootInfoId = 'archive-root-info-' + Date.now();
     function cleanupRootInfo() {
         try { document.querySelectorAll('[id^="archive-root-info"]').forEach(el => { el.remove(); }); } catch (e) { }
@@ -2120,10 +2424,8 @@
     }
 
     try {
-        GM_registerMenuCommand('⚙️ 115Rename 设置', openSettingsPanel);
-        GM_registerMenuCommand('📋 备份文件名', backupFileNames);
-        GM_registerMenuCommand('ℹ️ 版本 v' + SCRIPT_VERSION, () => showPageNotification('115Rename2026 v' + SCRIPT_VERSION, 'info', 3000));
+        GM_registerMenuCommand('⚙️ 设置', openSettingsPanel);
     } catch (e) { }
 
-    console.log('115Rename2026 v' + SCRIPT_VERSION + ' 已加载（全面适配新版 115 & 样式完美对齐）');
+    console.log('115Rename2026 v' + SCRIPT_VERSION + ' 已加载（优化防冲突、紧凑布局、OLED纯黑适配、拖拽排序、自定义源智能兼容）');
 })();
