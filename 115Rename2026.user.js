@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         3.0.0
-// @description     115 改名工具｜双源混合刮削｜全功能恢复｜侧边栏设置｜暗黑模式支持
+// @version         3.1.0
+// @description     115 改名工具｜双源混合刮削｜极速竞速机制｜并发池化｜深色模式适配｜正式版
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -25,11 +25,11 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.0.0';
+    const SCRIPT_VERSION = '3.1.0';
 
-    // ==================== 番号识别算法 (老司机精简版) ====================
+    // ==================== 番号识别算法 ====================
     const OD = (function () {
-        const FC2_PATTERN = /\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})\b/i;
+        const FC2_PATTERN = /\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})(?:[-_\s](\d{1,2}|[A-Za-z]))?\b/i;
         const GARBAGE_PREFIX = ["FULLHD", "H264", "H265", "1080P", "720P", "PART", "DISC", "10BIT"];
         const stripLink = s => String(s || '').replace(/urn:btih:[a-z0-9]+/gi, ' ').replace(/\|(?:\d{6,}|[a-f0-9]{32})(?=\|)/gi, '| ');
         const stripDate = s => String(s || '').replace(/\b(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b/g, ' ');
@@ -56,7 +56,7 @@
             if (fc) return normalizeCode(`FC2-PPV-${fc[1]}`);
             const m = s.match(/\b([A-Z0-9][A-Z0-9]{1,14})[-_\s](\d{2,10})(?:[-_](\d{1,3}))?/i);
             if (m && !GARBAGE_PREFIX.includes(m[1].toUpperCase())) {
-                return normalizeCode(m[3] ? `${m[1].toUpperCase()}-${m[2]}-${m[3]}` : `${m[1].toUpperCase()}-${m[2]}`);
+                return normalizeCode(`${m[1].toUpperCase()}-${m[2]}`);
             }
             return null;
         }
@@ -70,6 +70,7 @@
         zhTitle: { label: '中文标题', settingKey: 'enableZhTitle', default: false },
         actresses: { label: '演员', settingKey: 'enableActresses', default: true },
         date: { label: '日期', settingKey: 'enableDate', default: true },
+        rating: { label: '评分', settingKey: 'enableRating', default: false },
     };
 
     const MENU_ITEMS = [
@@ -83,14 +84,14 @@
     ];
 
     const DEFAULT_SETTINGS = {
-        fieldOrder: 'code,title,zhTitle,actresses,date',
+        fieldOrder: 'code,title,zhTitle,actresses,date,rating',
         sourceOrder: 'javdb,javbus,javlibrary,xslist,fc2ppvdb,missav,avsox,avmoo,custom',
         scrapeSources: 'javdb,javbus,javlibrary,xslist,fc2ppvdb,missav,avsox,avmoo',
         customSources: '',
         fieldSeparator: ' ', datePrefix: '-', actressSeparator: '・',
-        enableTitle: true, enableZhTitle: false, enableActresses: true, enableDate: true, enableMarkers: true,
+        enableTitle: true, enableZhTitle: false, enableActresses: true, enableDate: true, enableRating: false, enableMarkers: true,
         translateChinese: false, protectManualName: true, segmentPrefix: 'cd',
-        renameConcurrency: 3, archiveConcurrency: 3,
+        renameConcurrency: 5, queryConcurrency: 6, archiveConcurrency: 3,
         archiveRootCid: null, archiveRootName: null, archiveRootPath: '',
         cacheTtlDays: 90, negativeCacheTtlHours: 24, actressAlias: null,
         menuVisibility: { localCodeProcess: true, renameMultiDate: true, renameMultiZh: true, archiveFolder: true, archiveBucket: true, setArchiveRoot: true, javdbRating: true },
@@ -103,6 +104,9 @@
             const raw = GM_getValue('rename2026_settings', '');
             SETTINGS = Object.assign({}, DEFAULT_SETTINGS, raw ? JSON.parse(raw) : {});
             if (!SETTINGS.menuVisibility) SETTINGS.menuVisibility = Object.assign({}, DEFAULT_SETTINGS.menuVisibility);
+            if (!String(SETTINGS.fieldOrder || '').split(',').map(x => x.trim()).includes('rating')) {
+                SETTINGS.fieldOrder = (SETTINGS.fieldOrder ? SETTINGS.fieldOrder.replace(/,\s*$/, '') + ',' : '') + 'rating';
+            }
         } catch (e) { SETTINGS = Object.assign({}, DEFAULT_SETTINGS); }
         return SETTINGS;
     }
@@ -151,7 +155,9 @@
         const ext = (safeExtMatch && !/^\d+$/.test(safeExtMatch[1])) ? safeExtMatch[0] : '';
         const parts = (ext ? filename.slice(0, -ext.length) : filename).split('@').map(p => p.trim()).filter(Boolean);
         if (parts.length <= 1) return filename;
+        const isDomain = s => !s ? false : (!/\.(mp4|mkv|avi)$/i.test(s) && /^(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(s));
         for (let i = 0; i < parts.length; i++) {
+            if (isDomain(parts[i])) continue;
             if (/\b[A-Z]{2,8}[-_ ]?\d{2,5}/i.test(parts[i]) || /\bfc2?\d{5,8}/i.test(parts[i])) return parts[i] + ext;
         }
         return parts[parts.length - 1] + ext;
@@ -169,6 +175,24 @@
     const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
     // ==================== 115 页面交互 ====================
+    function pickFid(row) {
+        if (!row) return '';
+        const attrs = ['data-file-id', 'cate_id', 'file_id', 'cid'];
+        for (const a of attrs) { const v = row.getAttribute && row.getAttribute(a); if (v) return String(v).trim(); }
+        const cb = row.querySelector('input[type="checkbox"]');
+        return cb ? (cb.getAttribute('data-id') || cb.value || '') : '';
+    }
+    function pickFn(row) {
+        if (!row) return '';
+        const direct = row.getAttribute('title') || row.getAttribute('data-title') || row.getAttribute('data-file-name');
+        if (direct) return String(direct).trim();
+        const sels = ['.file-name .name[title]', '.file-name .name', '.file-name-responsive[title]', '.file-name-responsive', '.name[title]'];
+        for (const s of sels) {
+            const el = row.querySelector(s);
+            if (el) { const t = el.getAttribute('title') || el.textContent; if (t && t.trim()) return String(t).trim(); }
+        }
+        return '';
+    }
     function get115SelectedItems() {
         const results = [], seen = new Set();
         const docs = [document];
@@ -186,8 +210,8 @@
                 seen.add(row);
                 const ft = row.getAttribute('file_type');
                 const isFolder = ft === '0' || Array.from(row.querySelectorAll('img')).some(img => img.getAttribute('alt') === '文件夹' || img.getAttribute('src')?.includes('folder'));
-                const fid = row.getAttribute('data-file-id') || row.getAttribute('cate_id') || row.getAttribute('file_id') || row.querySelector('input[type="checkbox"]')?.getAttribute('data-id');
-                const fn = row.getAttribute('title') || row.querySelector('.file-name .name, .file-name-responsive, .name[title]')?.getAttribute('title') || row.querySelector('.file-name .name, .file-name-responsive')?.textContent?.trim();
+                const fid = pickFid(row);
+                const fn = pickFn(row);
                 if (fid && fn) results.push({ fid, fn, isFolder, row });
             });
         });
@@ -276,22 +300,13 @@
         reinjectTimer = setTimeout(injectMenu, 200);
     }).observe(document.body, { childList: true, subtree: true });
 
-    // ==================== 核心解析与改名 ====================
-    function extractPart(str, code) {
-        if (!code) return '';
-        const m = String(str || '').match(new RegExp(code.replace(/-/g, '[-_\\s.]?') + '[-_.\\s\\[\\](){}]*(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\\s]*0*(\\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])', 'i'));
-        return m ? (isNaN(m[1]) ? m[1].toUpperCase() : (parseInt(m[1], 10) >= 1 && parseInt(m[1], 10) <= 20 ? m[1] : '')) : '';
-    }
-
+    // ==================== 核心解析 ====================
     function checkUncensored(baseCode, raw) { return /无码|無修正|uncensored/i.test(raw) || /_/.test(baseCode); }
 
     function removeCodeFromTitle(str, baseCode) {
         if (!baseCode) return str;
-        const parts = baseCode.split('-');
-        if (parts.length >= 2) {
-            return str.replace(new RegExp('\\b' + parts[0].replace(/_/g, '[-_\\s]') + '[-_.\\s]*0*' + (parts[1].replace(/^0+/, '') || parts[1]) + '(?![0-9])', 'gi'), ' ').replace(/\s+/g, ' ').trim();
-        }
-        return str;
+        const escapedCode = escapeRegExp(baseCode).replace(/\\-/g, '[-_.\\s]*');
+        return str.replace(new RegExp('\\b' + escapedCode + '(?![0-9])', 'gi'), ' ').replace(/\s+/g, ' ').trim();
     }
 
     const parseVideoInfo = (origTitle, safeSuffix) => {
@@ -311,54 +326,85 @@
             });
 
             let dateStr = '';
-            const dm = rawForCode.match(/(?:\b|_|^|@|】|\[|【)((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})(?:\b|_|$|(?=[A-Za-z\u4e00-\u9fa5【\[\]】]))/i);
+            const dm = rawForCode.match(/\b((?:19|20)\d{2}[-_\/\.\s]+\d{1,2}[-_\/\.\s]+\d{1,2})\b/i);
             if (dm) {
                 const p = dm[1].trim().split(/[-_\/\.\s]+/);
                 if (p.length === 3) dateStr = p[0] + '-' + String(p[1]).padStart(2, '0') + '-' + String(p[2]).padStart(2, '0');
-                rawForCode = rawForCode.replace(dm[0], ' ');
+                rawForCode = rawForCode.replace(dm[1], ' ');
             }
 
             let cleanForCode = rawForCode.replace(/[-_.\s]*hh[bcdh]\d*/gi, ' ').replace(/[-_.\s]*(?:4k|4ks|8k|2160p|1080p|720p)?\s*(?:60|120|30)\s*fps/gi, ' ').replace(/[-_.\s]*\b(?:4k|8k|2160p|1080p|720p)\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
-            let part = extractPart(cleanForCode, '');
-            const partMatch = cleanForCode.match(/(?:^|[^A-Za-z0-9])(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\s\[\](){}]*0*(\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])/i);
-            if (partMatch) part = partMatch[1];
+            let part = '';
+            let queryCode = null;
+            let matchToReplace = null;
 
-            let queryCode = null, extracted = null;
-            try {
-                const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
-                if (UW.__LAOSIJI_PAN115_OFFLINE__ && typeof UW.__LAOSIJI_PAN115_OFFLINE__.extractCode === 'function') {
-                    const r = UW.__LAOSIJI_PAN115_OFFLINE__.extractCode(cleanForCode);
-                    if (r) queryCode = normalize115Name(r);
+            const fc2Match = cleanForCode.match(/\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})(?:[-_\s](\d{1,2}|[A-Za-z]))?(?=$|[^0-9A-Za-z])/i);
+            if (fc2Match) {
+                queryCode = 'FC2-PPV-' + fc2Match[1];
+                if (fc2Match[2]) part = fc2Match[2];
+                matchToReplace = fc2Match[0];
+            } else {
+                const normalMatch = cleanForCode.match(/\b([A-Z0-9][A-Z0-9]{1,14})[-_\s](\d{2,10})(?:[-_](\d{1,3}|[A-Za-z]))?(?=$|[^0-9A-Za-z])/i);
+                if (normalMatch) {
+                    queryCode = normalMatch[1].toUpperCase() + '-' + normalMatch[2];
+                    if (normalMatch[3]) part = normalMatch[3];
+                    matchToReplace = normalMatch[0];
                 }
-            } catch (e) { }
+            }
+
             if (!queryCode) {
-                const r = OD.extractCode(cleanForCode);
-                if (r) queryCode = OD.normalizeCode(r);
+                try {
+                    const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+                    if (UW.__LAOSIJI_PAN115_OFFLINE__ && typeof UW.__LAOSIJI_PAN115_OFFLINE__.extractCode === 'function') {
+                        const r2 = UW.__LAOSIJI_PAN115_OFFLINE__.extractCode(cleanForCode);
+                        if (r2) queryCode = normalize115Name(r2);
+                    }
+                } catch (e) { }
             }
 
             if (!queryCode) return null;
-
-            const codeParts = queryCode.split(/[-_]/);
-            if (codeParts.length >= 2) cleanForCode = cleanForCode.replace(new RegExp('\\b' + codeParts[0] + '[-_.\\s]*0*' + (codeParts[1].replace(/^0+/, '') || codeParts[1]) + '(?![0-9])', 'gi'), ' ');
-            else cleanForCode = cleanForCode.replace(new RegExp(escapeRegExp(queryCode), 'gi'), ' ');
-
             const baseCode = queryCode;
+
+            if (matchToReplace) {
+                cleanForCode = cleanForCode.replace(matchToReplace, ' ');
+            }
+
+            const escapedCode = escapeRegExp(baseCode).replace(/\\-/g, '[-_.\\s]*');
+            cleanForCode = cleanForCode.replace(new RegExp('\\b' + escapedCode + '(?![0-9])', 'gi'), ' ');
+
+            if (part) {
+                cleanForCode = cleanForCode.replace(new RegExp('[-_.\\s]*(?:cd|part|pt|disc|vol|volume|ep|sp)?[-_.\\s]*0*' + escapeRegExp(part) + '(?=$|[^0-9A-Za-z])', 'gi'), ' ');
+            }
+
             if (checkUncensored(baseCode, rawForCode) && markers.indexOf('无码') === -1) markers.push('无码');
             if (rawForCode.indexOf('中文') !== -1 || rawForCode.indexOf('中字') !== -1) {
                 if (markers.indexOf('中文字幕') === -1) markers.push('中文字幕');
             }
 
             let finalPart = part;
-            if (finalPart && loadSettings().segmentPrefix && /^\d+$/.test(finalPart)) finalPart = loadSettings().segmentPrefix + finalPart;
+            if (finalPart && loadSettings().segmentPrefix) {
+                if (/^\d+$/.test(finalPart)) {
+                    finalPart = loadSettings().segmentPrefix + finalPart;
+                }
+            }
             const fullCode = finalPart ? baseCode + '-' + finalPart : baseCode;
 
-            let cleanTitle = removeMarkers(cleanForCode).replace(RESOLUTION_FPS_PATTERN, ' ').replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ').replace(/[_\.]+/g, ' ').replace(/\s+/g, ' ').trim();
+            let cleanTitle = removeMarkers(cleanForCode)
+                .replace(RESOLUTION_FPS_PATTERN, ' ')
+                .replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ')
+                .replace(/[_\.]+/g, ' ')
+                .replace(/[-]+/g, ' ')
+                .replace(/\s+/g, ' ').trim();
+
             cleanTitle = removeCodeFromTitle(cleanTitle, baseCode);
             if (isPunctOnly(cleanTitle)) cleanTitle = '';
 
             return { queryCode, baseCode, fullCode, markers, date: dateStr, localTitle: cleanTitle };
-        } catch (e) { return null; }
+        } catch (e) {
+            console.error('parseVideoInfo error:', e);
+            return null;
+        }
     };
 
     const buildNewName = (vInfo, info, suffix) => {
@@ -367,6 +413,7 @@
         const originalTitle = (info && info.title) || vInfo.localTitle || '';
         const zhTitle = (info && info.zhTitle) || '';
         const dateStr = (info && info.date) || vInfo.date || '';
+        const rating = (info && info.rating != null) ? Number(info.rating) : null;
 
         let actressStr = '';
         const actresses = (info && info.actresses) || [];
@@ -383,11 +430,21 @@
         let cleanZhTitle = zhTitle ? removeCodeFromTitle(zhTitle, vInfo.baseCode).replace(/【[^】]*】/g, '').trim() : '';
         if (isPunctOnly(cleanTitle)) cleanTitle = '';
 
-        const fieldValues = { code: vInfo.fullCode, title: cleanTitle, zhTitle: cleanZhTitle, actresses: actressStr, date: dateStr };
-        const enabled = { code: true, title: s.enableTitle, zhTitle: s.enableZhTitle, actresses: s.enableActresses, date: s.enableDate };
+        const fieldValues = {
+            code: vInfo.fullCode,
+            title: cleanTitle,
+            zhTitle: cleanZhTitle,
+            actresses: actressStr,
+            date: dateStr,
+            rating: (rating != null && !isNaN(rating)) ? '[' + rating.toFixed(1) + ']' : ''
+        };
+        const enabled = { code: true, title: s.enableTitle, zhTitle: s.enableZhTitle, actresses: s.enableActresses, date: s.enableDate, rating: s.enableRating };
+
+        let order = String(s.fieldOrder || 'code,title,actresses,date').split(',').map(x => x.trim()).filter(Boolean);
+        if (s.enableRating && !order.includes('rating')) order.push('rating');
+
         const parts = [];
-        String(s.fieldOrder || 'code,title,actresses,date').split(',').forEach(f => {
-            f = f.trim();
+        order.forEach(f => {
             if (enabled[f] && fieldValues[f]) parts.push(f === 'date' && s.datePrefix ? s.datePrefix + fieldValues[f] : fieldValues[f]);
         });
         let name = parts.join(s.fieldSeparator || ' ');
@@ -417,18 +474,37 @@
         return asciiWords.length >= 2 || asciiWords.join('').length >= 10;
     };
 
-    // ==================== 刮削源集合 ====================
+    // ==================== 缓存 ====================
     function getCache(k) { try { return JSON.parse(GM_getValue(k, '{}')); } catch (e) { return {}; } }
     function setCache(k, d) { GM_setValue(k, JSON.stringify(d)); }
     let infoCache = getCache('jb_infoCache'), ratingCache = getCache('jb_ratingCache'), negativeCache = getCache('jb_negativeCache');
+    let translationCache = getCache('rename2026_translationCache'), ratingNegCache = getCache('rename2026_ratingNeg');
 
     const isInfoCacheValid = code => { const e = infoCache[code]; return e && (!e.cachedAt || (Date.now() - Number(e.cachedAt)) < (loadSettings().cacheTtlDays || 90) * 86400000); };
     const storeInfo = (key, info) => { if (info) info.cachedAt = Date.now(); infoCache[key] = info; setCache('jb_infoCache', infoCache); };
     const isNegativeCached = code => { const e = negativeCache[code]; return e && e.cachedAt && (Date.now() - Number(e.cachedAt)) < (loadSettings().negativeCacheTtlHours || 24) * 3600000; };
     const markNegativeCached = code => { negativeCache[code] = { cachedAt: Date.now() }; setCache('jb_negativeCache', negativeCache); };
 
+    const TRANSLATION_TTL = 30 * 86400000;
+    function getCachedTranslation(title) {
+        const e = translationCache[title];
+        if (e && Date.now() - Number(e.cachedAt) < TRANSLATION_TTL) return e.text;
+        return null;
+    }
+    function setCachedTranslation(title, text) {
+        translationCache[title] = { text, cachedAt: Date.now() };
+        const keys = Object.keys(translationCache);
+        if (keys.length > 500) keys.sort((a, b) => translationCache[a].cachedAt - translationCache[b].cachedAt).slice(0, 100).forEach(k => delete translationCache[k]);
+        setCache('rename2026_translationCache', translationCache);
+    }
+
+    const RATING_NEGATIVE_TTL = 5 * 60 * 1000;
+    function isRatingNegativeCached(code) { const e = ratingNegCache[code]; return !!(e && Date.now() - Number(e.cachedAt) < RATING_NEGATIVE_TTL); }
+    function markRatingNegative(code) { ratingNegCache[code] = { cachedAt: Date.now() }; setCache('rename2026_ratingNeg', ratingNegCache); }
+
     const COMMON_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' };
 
+    // ==================== 刮削源集合 ====================
     function fetchJavbus(code) {
         const url = `https://www.javbus.com/search/${encodeURIComponent(code)}&type=&parent=ce`;
         return gmRequest({ url, headers: COMMON_HEADERS, anonymous: true }).then(res => {
@@ -548,15 +624,31 @@
 
     const SOURCE_REGISTRY = { javdb: fetchJavdb, javbus: fetchJavbus, javlibrary: fetchJavlib, xslist: fetchXslist, fc2ppvdb: fetchFC2PPVDB, missav: fetchMissavFC2, avsox: fetchAvsox, avmoo: fetchAvmoo };
 
-    async function fetchRemoteInfo(code) {
+    // ==================== 在途查询与竞速机制 ====================
+    const inflightQueries = new Map();
+
+    function fetchRemoteInfo(code) {
+        const key = code.toUpperCase();
+        if (inflightQueries.has(key)) {
+            return inflightQueries.get(key);
+        }
+        const p = _fetchRemoteInfoImpl(code).finally(() => { inflightQueries.delete(key); });
+        inflightQueries.set(key, p);
+        return p;
+    }
+
+    async function _fetchRemoteInfoImpl(code) {
         const key = code.toUpperCase();
         if (isInfoCacheValid(key)) return infoCache[key];
 
-        // 1. 借用老司机
+        // 1. 极速尝试老司机接口 (最多等3秒，避免卡住)
         try {
             const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
             if (UW.__LAOSIJI_PAN115_WORK_INFO__?.resolve) {
-                const info = await UW.__LAOSIJI_PAN115_WORK_INFO__.resolve(code);
+                const info = await Promise.race([
+                    UW.__LAOSIJI_PAN115_WORK_INFO__.resolve(code),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Laosiji Timeout')), 3000))
+                ]);
                 if (info && (info.title || info.actors?.length)) {
                     const result = { title: info.title || '', date: info.date || '', actresses: info.actors || [], actorEntries: info.actorRefs || [] };
                     storeInfo(key, result); return result;
@@ -564,44 +656,59 @@
             }
         } catch (e) { }
 
-        // 2. 内置源兜底
+        // 2. 如果老司机没拿到，再并发查内置源，采用竞速模式，谁先成功用谁的
         if (isNegativeCached(key)) return Promise.reject(new Error('Negative'));
+
         const s = loadSettings(), enabled = new Set(String(s.scrapeSources || '').split(',').map(x => x.trim()));
         const promises = [];
 
         Array.from(enabled).forEach(k => {
             if (k === 'custom') {
                 String(s.customSources || '').split(',').filter(Boolean).forEach((url, idx) => {
-                    promises.push(fetchCustomSource(code, url).then(i => { storeInfo('custom_' + idx, i); return i; }).catch(() => null));
+                    promises.push(fetchCustomSource(code, url).catch(() => null));
                 });
             } else if (SOURCE_REGISTRY[k]) {
-                promises.push(SOURCE_REGISTRY[k](code).then(i => { storeInfo(k, i); return i; }).catch(() => null));
+                promises.push(SOURCE_REGISTRY[k](code).catch(() => null));
             }
         });
 
         if (!promises.length) return Promise.reject(new Error('No sources'));
+
+        // 竞速模式
         return new Promise((resolve, reject) => {
             let settled = false;
-            const check = () => {
-                if (settled) return;
-                Promise.allSettled(promises).then(rs => {
-                    const first = rs.find(r => r.status === 'fulfilled' && r.value);
-                    if (first) { settled = true; resolve(first.value); }
-                    else { settled = true; markNegativeCached(key); reject(new Error('All failed')); }
+            let failCount = 0;
+            const timer = setTimeout(() => {
+                if (!settled) { settled = true; markNegativeCached(key); reject(new Error('Timeout')); }
+            }, 10000); // 10秒硬超时
+
+            promises.forEach(p => {
+                p.then(val => {
+                    if (settled || !val) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    storeInfo(key, val);
+                    resolve(val);
+                }).catch(() => {
+                    failCount++;
+                    if (!settled && failCount === promises.length) {
+                        settled = true;
+                        clearTimeout(timer);
+                        markNegativeCached(key);
+                        reject(new Error('All failed'));
+                    }
                 });
-            };
-            promises.forEach(p => p.finally(() => { if (--promises.length === 0) check(); }));
-            setTimeout(check, 15000);
+            });
         });
     }
 
     async function translateTitleToChinese(title) {
         try {
-            const r = await gmRequest({ method: 'POST', url: 'https://oneshot-free.www.deepl.com/v1/translate', headers: { 'Authorization': 'None', 'Content-Type': 'application/json' }, data: JSON.stringify({ text: [title], source_lang: 'ja', target_lang: 'zh-Hans' }), anonymous: true });
+            const r = await gmRequest({ method: 'POST', url: 'https://oneshot-free.www.deepl.com/v1/translate', headers: { 'Authorization': 'None', 'Content-Type': 'application/json' }, data: JSON.stringify({ text: [title], source_lang: 'ja', target_lang: 'zh-Hans' }), anonymous: true, timeout: 10000 });
             return JSON.parse(r.responseText)?.translations?.[0]?.text?.trim() || '';
         } catch (e) {
             try {
-                const r2 = await gmRequest({ url: `https://api.mymemory.translated.net/get?q=${encodeURIComponent(title)}&langpair=ja%7Czh-CN`, anonymous: true });
+                const r2 = await gmRequest({ url: `https://api.mymemory.translated.net/get?q=${encodeURIComponent(title)}&langpair=ja%7Czh-CN`, anonymous: true, timeout: 10000 });
                 return JSON.parse(r2.responseText)?.responseData?.translatedText?.trim() || '';
             } catch (e2) { return ''; }
         }
@@ -609,10 +716,20 @@
 
     async function getTargetName(vInfo, suffix) {
         const code = vInfo.queryCode, key = code.toUpperCase();
-        if (isInfoCacheValid(key)) return buildNameFromInfo(vInfo, infoCache[key], suffix);
+        const t0 = performance.now();
+        if (isInfoCacheValid(key)) {
+            const r = await buildNameFromInfo(vInfo, infoCache[key], suffix);
+            console.log(`[Rename2026] getTargetName ${key} cache-hit ${(performance.now() - t0).toFixed(0)}ms`);
+            return r;
+        }
         try {
             const info = await fetchRemoteInfo(code);
-            if (info) { storeInfo(key, info); return await buildNameFromInfo(vInfo, info, suffix); }
+            if (info) {
+                storeInfo(key, info);
+                const r = await buildNameFromInfo(vInfo, info, suffix);
+                console.log(`[Rename2026] getTargetName ${key} ${(performance.now() - t0).toFixed(0)}ms`);
+                return r;
+            }
             return null;
         } catch (e) { return null; }
     }
@@ -621,10 +738,24 @@
         if (info?.uncensored && vInfo.markers && !vInfo.markers.includes('无码')) vInfo.markers.push('无码');
         let zhTitle = '';
         if (loadSettings().translateChinese && info?.title) {
-            const t = await translateTitleToChinese(info.title);
-            if (t && t !== info.title) zhTitle = t;
+            const cached = getCachedTranslation(info.title);
+            if (cached !== null) { zhTitle = cached; }
+            else {
+                const t0 = performance.now();
+                try {
+                    const t = await translateTitleToChinese(info.title);
+                    if (t && t !== info.title) { zhTitle = t; setCachedTranslation(info.title, t); }
+                } catch (e) { }
+                console.log(`[Rename2026] translate "${info.title}" ${(performance.now() - t0).toFixed(0)}ms`);
+            }
         }
-        return buildNewName(vInfo, Object.assign({}, info, { zhTitle }), suffix);
+        let rating = (info && info.rating != null) ? info.rating : null;
+        if (loadSettings().enableRating && rating == null) {
+            const t0 = performance.now();
+            try { rating = await getRatingForCode(vInfo.queryCode); } catch (e) { }
+            console.log(`[Rename2026] rating ${vInfo.queryCode} ${(performance.now() - t0).toFixed(0)}ms -> ${rating}`);
+        }
+        return buildNewName(vInfo, Object.assign({}, info, { zhTitle, rating }), suffix);
     }
 
     // ==================== 核心业务调度 ====================
@@ -633,8 +764,11 @@
         getTargetName(vInfo, suffix).then(newName => {
             if (newName) send_115(fid, newName, vInfo.fullCode, origFilename, callback);
             else {
-                if (origFilename && hasManualNamePayload(origFilename, vInfo.queryCode)) showPageNotification(vInfo.fullCode + ' 已保护手动命名，跳过', 'info', 3000);
-                else showPageNotification('所有信息源未找到 ' + vInfo.queryCode, 'error', 4000);
+                if (origFilename && hasManualNamePayload(origFilename, vInfo.queryCode)) {
+                    console.log(`[Rename2026] ${vInfo.fullCode} 已保护手动命名，跳过`);
+                } else {
+                    console.error(`[Rename2026] 所有信息源未找到 ${vInfo.queryCode}`);
+                }
                 if (typeof callback === 'function') callback();
             }
         }).catch(() => { if (typeof callback === 'function') callback(); });
@@ -647,16 +781,20 @@
 
     function send_115(id, name, fh, origFilename, callback) {
         const fn = sanitizeFileName(name);
+        const t0 = performance.now();
         fetch('https://webapi.115.com/files/edit', {
             method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'fid=' + encodeURIComponent(id) + '&file_name=' + encodeURIComponent(fn)
         }).then(r => r.json()).then(r => {
-            if (!r.state) showPageNotification(fh + ' 修改失败: ' + (r.error || ''), 'error', 3000);
+            if (!r.state) console.error(`[Rename2026] ${fh} 修改失败: ` + (r.error || ''));
             else {
-                showPageNotification(fh + ' 修改成功', 'success', 2000);
                 if (origFilename) renameCompareList.push({ original: origFilename, new: name });
             }
+            console.log(`[Rename2026] send_115 ${fh} ${(performance.now() - t0).toFixed(0)}ms`);
             if (typeof callback === 'function') callback();
-        }).catch(() => { showPageNotification(fh + ' 请求失败', 'error', 3000); if (typeof callback === 'function') callback(); });
+        }).catch(() => {
+            console.error(`[Rename2026] send_115 ${fh} 请求失败 ${(performance.now() - t0).toFixed(0)}ms`);
+            if (typeof callback === 'function') callback();
+        });
     }
 
     function offerCompareExport() {
@@ -735,11 +873,33 @@
         const old = document.getElementById('rename-preview-overlay'); if (old) old.remove();
         if (!document.getElementById('rename-preview-style')) {
             const style = document.createElement('style'); style.id = 'rename-preview-style';
-            style.textContent = `.rp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:sans-serif}.rp-panel{width:min(1100px,calc(100vw - 32px));max-height:88vh;background:#fff;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.2)}.rp-header{padding:16px 20px;background:linear-gradient(135deg,#1a6dff,#1890ff);color:#fff;display:flex;justify-content:space-between;align-items:center}.rp-header h3{margin:0;font-size:16px;font-weight:600}.rp-toolbar{padding:10px 16px;border-bottom:1px solid #eee;display:flex;gap:10px;align-items:center;background:#fafafa}.rp-toolbar button{padding:5px 12px;border:1px solid #d9d9d9;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;color:#333}.rp-toolbar span{font-size:13px;color:#666;margin-left:auto}.rp-body{flex:1;overflow:auto;padding:8px 0;background:#fff}.rp-row{display:flex;gap:10px;padding:10px 16px;border-bottom:1px solid #f5f5f5;font-size:13px}.rp-col-code{width:150px;font-family:monospace;color:#1890ff;font-weight:600}.rp-col-old{flex:1;word-break:break-all;color:#333}.rp-col-new{flex:1.2;word-break:break-all;color:#1890ff}.rp-col-status{width:96px;text-align:center;font-weight:500}.rp-footer{padding:12px 20px;border-top:1px solid #eee;text-align:right;background:#fafafa;display:flex;justify-content:flex-end;gap:10px}.rp-btn-cancel{padding:8px 18px;border:1px solid #ccc;background:#fff;color:#333 !important;border-radius:6px;cursor:pointer}.rp-btn-confirm{padding:8px 18px;border:none;background:#1a6dff !important;color:#fff !important;border-radius:6px;cursor:pointer;font-weight:600}`;
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark' || document.body.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const vars = isDark ? `
+                --rp-bg: #1e1e1e;
+                --rp-text: #e5e5e5;
+                --rp-border: #333;
+                --rp-toolbar-bg: #252526;
+                --rp-btn-bg: #333;
+                --rp-btn-border: #444;
+                --rp-text-old: #aaa;
+                --rp-footer-bg: #252526;
+                --rp-primary: #60a5fa;
+            ` : `
+                --rp-bg: #fff;
+                --rp-text: #333;
+                --rp-border: #f5f5f5;
+                --rp-toolbar-bg: #fafafa;
+                --rp-btn-bg: #fff;
+                --rp-btn-border: #d9d9d9;
+                --rp-text-old: #333;
+                --rp-footer-bg: #fafafa;
+                --rp-primary: #1a6dff;
+            `;
+            style.textContent = `.rp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:sans-serif}.rp-panel{${vars} width:min(1100px,calc(100vw - 32px));max-height:88vh;background:var(--rp-bg);color:var(--rp-text);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.2)}.rp-header{padding:16px 20px;background:linear-gradient(135deg,#1a6dff,#1890ff);color:#fff;display:flex;justify-content:space-between;align-items:center}.rp-header h3{margin:0;font-size:16px;font-weight:600}.rp-toolbar{padding:10px 16px;border-bottom:1px solid var(--rp-border);display:flex;gap:10px;align-items:center;background:var(--rp-toolbar-bg)}.rp-toolbar button{padding:5px 12px;border:1px solid var(--rp-btn-border);border-radius:4px;background:var(--rp-btn-bg);cursor:pointer;font-size:13px;color:var(--rp-text)}.rp-toolbar span{font-size:13px;color:var(--rp-text-old);margin-left:auto}.rp-body{flex:1;overflow:auto;padding:8px 0;background:var(--rp-bg)}.rp-row{display:flex;gap:10px;padding:10px 16px;border-bottom:1px solid var(--rp-border);font-size:13px}.rp-col-code{width:150px;font-family:monospace;color:#1890ff;font-weight:600}.rp-col-old{flex:1;word-break:break-all;color:var(--rp-text-old)}.rp-col-new{flex:1.2;word-break:break-all;color:#1890ff}.rp-col-status{width:96px;text-align:center;font-weight:500}.rp-footer{padding:12px 20px;border-top:1px solid var(--rp-border);text-align:right;background:var(--rp-footer-bg);display:flex;justify-content:flex-end;gap:16px;align-items:center}.rp-btn-cancel{padding:8px 18px;border:1px solid var(--rp-btn-border);background:var(--rp-btn-bg);color:var(--rp-text) !important;border-radius:6px;cursor:pointer;font-size:14px;}.rp-btn-confirm{padding:8px 18px;border:none;background:transparent !important;color:var(--rp-primary) !important;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all .2s}.rp-btn-confirm:hover{opacity:0.8}`;
             document.head.appendChild(style);
         }
         const overlay = document.createElement('div'); overlay.id = 'rename-preview-overlay'; overlay.className = 'rp-overlay';
-        overlay.innerHTML = `<div class="rp-panel"><div class="rp-header"><h3>改名预览</h3><span id="rp-close" style="cursor:pointer;font-size:22px;">×</span></div><div class="rp-toolbar"><button id="rp-sel-all">全选</button><button id="rp-invert">反选</button><span id="rp-sum" style="margin-left:auto">共 ${rows.length} 个，已选 0 个</span></div><div id="rp-body" class="rp-body"></div><div class="rp-footer"><button id="rp-cancel" class="rp-btn-cancel">取消</button><button id="rp-confirm" class="rp-btn-confirm">确认改名</button></div></div>`;
+        overlay.innerHTML = `<div class="rp-panel"><div class="rp-header"><h3>改名预览</h3><span id="rp-close" style="cursor:pointer;font-size:22px;">×</span></div><div class="rp-toolbar"><button id="rp-sel-all">全选</button><button id="rp-invert">反选</button><span id="rp-sum" style="margin-left:auto">共 ${rows.length} 个，已选 0 个</span></div><div id="rp-body" class="rp-body"></div><div class="rp-footer"><button id="rp-cancel" class="rp-btn-cancel">取消</button><button id="rp-confirm" class="rp-btn-confirm">确定</button></div></div>`;
         document.body.appendChild(overlay);
         const body = document.getElementById('rp-body');
         const updSum = () => { document.getElementById('rp-sum').textContent = `共 ${rows.length} 个，已选 ${document.querySelectorAll('.rp-chk:checked').length} 个`; };
@@ -756,6 +916,7 @@
         document.getElementById('rp-confirm').onclick = () => { const sel = []; document.querySelectorAll('.rp-chk:checked').forEach(c => sel.push(rows[Number(c.dataset.idx)])); overlay.remove(); onConfirm(sel); };
     }
 
+    // ==================== 预览生成并发池化 ====================
     function buildPreviewRows(parsedItems, isLocal, done) {
         if (isLocal) {
             done(parsedItems.map(item => {
@@ -765,34 +926,54 @@
             }));
             return;
         }
+
         const missing = Array.from(new Set(parsedItems.map(i => i.vi.queryCode.toUpperCase()))).filter(c => !isInfoCacheValid(c));
-        const after = () => {
-            let rem = parsedItems.length; const results = new Array(parsedItems.length);
-            parsedItems.forEach((item, idx) => {
-                getTargetName(item.vi, item.safeSuffix).then(nn => {
-                    let st = '网络', ch = true;
-                    if (!nn) { st = hasManualNamePayload(item.fn, item.vi.queryCode) ? '手动命名保护' : '未找到'; ch = false; }
-                    results[idx] = { item, newName: nn, status: st, checked: ch };
-                    if (--rem === 0) done(results.filter(Boolean));
-                }).catch(() => { results[idx] = { item, newName: null, status: '错误', checked: false }; if (--rem === 0) done(results.filter(Boolean)); });
+        const conc = Math.max(1, loadSettings().queryConcurrency || 6);
+
+        const processItem = (item) => {
+            return getTargetName(item.vi, item.safeSuffix).then(nn => {
+                let st = '网络', ch = true;
+                if (!nn) { st = hasManualNamePayload(item.fn, item.vi.queryCode) ? '手动命名保护' : '未找到'; ch = false; }
+                return { item, newName: nn, status: st, checked: ch };
+            }).catch(() => {
+                return { item, newName: null, status: '错误', checked: false };
             });
         };
-        if (!missing.length) return after();
-        let pi = 0; const prefetch = () => { if (pi >= missing.length) return after(); fetchRemoteInfo(missing[pi++]).catch(() => { }).finally(() => setTimeout(prefetch, 200)); };
-        for (let i = 0; i < Math.min(3, missing.length); i++) prefetch();
+
+        if (!missing.length) {
+            const results = new Array(parsedItems.length);
+            const tasks = parsedItems.map((item, idx) => cb => processItem(item).then(res => { results[idx] = res; cb(); }));
+            runTasksWithLimit(tasks, conc, 0, () => done(results.filter(Boolean)));
+        } else {
+            // 先并发预取并池化
+            const fetchTasks = missing.map(code => cb => fetchRemoteInfo(code).catch(() => { }).finally(cb));
+            runTasksWithLimit(fetchTasks, conc, 100, () => {
+                const results = new Array(parsedItems.length);
+                const tasks = parsedItems.map((item, idx) => cb => processItem(item).then(res => { results[idx] = res; cb(); }));
+                runTasksWithLimit(tasks, conc, 0, () => done(results.filter(Boolean)));
+            });
+        }
     }
 
     function rename(call) {
         if (window.renameInProgress) return showPageNotification('已有任务进行中', 'info', 2000);
         window.renameInProgress = true;
+        const tStart = performance.now();
         const selected = get115SelectedItems();
-        if (!selected.length) { showPageNotification('请先选择文件', 'info', 3000); window.renameInProgress = false; return; }
+        if (!selected.length) { console.error('[Rename2026] 请先选择文件'); window.renameInProgress = false; return; }
         const parsedItems = [];
         selected.forEach(item => { const ss = getSafeSuffix(item.fn); const vi = parseVideoInfo(item.fn, ss); if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, safeSuffix: ss, vi }); });
-        if (!parsedItems.length) { showPageNotification('未识别到有效番号', 'info', 3000); window.renameInProgress = false; return; }
+        if (!parsedItems.length) { console.error('[Rename2026] 未识别到有效番号'); window.renameInProgress = false; return; }
 
         const isLocal = (call === local_rename);
-        const finishRename = () => { progressBox.finish(); showPageNotification('处理完成', 'success', 3000); setCache('jb_infoCache', infoCache); setCache('jb_negativeCache', negativeCache); window.renameInProgress = false; offerCompareExport(); };
+        const finishRename = () => {
+            progressBox.finish();
+            setCache('jb_infoCache', infoCache); setCache('jb_negativeCache', negativeCache);
+            setCache('rename2026_translationCache', translationCache); setCache('rename2026_ratingNeg', ratingNegCache);
+            window.renameInProgress = false;
+            console.log(`[Rename2026] rename total ${(performance.now() - tStart).toFixed(0)}ms, parsed=${parsedItems.length}`);
+            offerCompareExport();
+        };
         const cancelRename = () => { window.renameInProgress = false; };
 
         const execRename = rows => {
@@ -800,10 +981,12 @@
             progressBox.init(isLocal ? '本地规范' : '联网改名', rows.length);
             renameCompareList = []; let processed = 0;
             const tasks = rows.map(row => done => send_115(row.item.fid, row.newName, row.item.vi.fullCode, row.item.fn, () => { progressBox.update(++processed); done(); }));
-            runTasksWithLimit(tasks, isLocal ? 3 : loadSettings().renameConcurrency, 200, finishRename);
+
+            // 本地处理并发5，极速间隔50ms；联网处理按用户并发，极速间隔50ms
+            runTasksWithLimit(tasks, isLocal ? 5 : loadSettings().renameConcurrency, 50, finishRename);
         };
         if (isLocal) buildPreviewRows(parsedItems, true, rows => showRenamePreview(rows, execRename, cancelRename));
-        else { showPageNotification('正在生成预览...', 'info', 3000); buildPreviewRows(parsedItems, false, rows => showRenamePreview(rows, execRename, cancelRename)); }
+        else { buildPreviewRows(parsedItems, false, rows => showRenamePreview(rows, execRename, cancelRename)); }
     }
 
     // ==================== 归档与评分 ====================
@@ -835,7 +1018,6 @@
             if (/^FC2/i.test(it.vi.queryCode)) act = 'FC2';
             else if (isInfoCacheValid(it.vi.queryCode) && infoCache[it.vi.queryCode].actresses?.[0]) act = getStandardActressName(infoCache[it.vi.queryCode].actresses[0]);
             else act = it.vi.queryCode.split('-')[0];
-
             fetch(`https://webapi.115.com/files/add`, { method: 'POST', credentials: 'include', body: `pid=${archiveRootCid}&cname=${encodeURIComponent(act)}` })
                 .then(r => r.json()).then(d => {
                     if (d.state) return d.cid || d.id;
@@ -866,24 +1048,40 @@
         runTasksWithLimit(tasks, 3, 500, () => { progressBox.finish(); showPageNotification('分桶归档完成', 'success', 3000); });
     }
 
+    const inflightRatings = new Map();
+    const RATING_TIMEOUT = 8000;
+
+    function getRatingForCode(code) {
+        const key = code.toUpperCase();
+        if (ratingCache[key]) return Promise.resolve(ratingCache[key]);
+        if (isRatingNegativeCached(key)) return Promise.resolve(null);
+        if (inflightRatings.has(key)) return inflightRatings.get(key);
+
+        const p = gmRequest({ url: `https://javdb.com/search?q=${encodeURIComponent(key)}&f=all`, headers: COMMON_HEADERS, anonymous: true, timeout: RATING_TIMEOUT })
+            .then(res => {
+                const doc = parseHTML(res.responseText);
+                const r = parseFloat(doc.querySelector('.movie-list .item')?.getAttribute('score'));
+                if (!isNaN(r) && r > 0) { const rounded = Math.round(r * 10) / 10; ratingCache[key] = rounded; setCache('jb_ratingCache', ratingCache); return rounded; }
+                markRatingNegative(key); return null;
+            }).catch(() => { markRatingNegative(key); return null; }).finally(() => { inflightRatings.delete(key); });
+
+        inflightRatings.set(key, p);
+        return p;
+    }
+
     async function getJavdbRating() {
         const sel = get115SelectedItems();
         if (!sel.length) return showPageNotification('请先选择文件', 'error', 3000);
         const items = sel.map(it => ({ fid: it.fid, fn: it.fn, vi: parseVideoInfo(it.fn, getSafeSuffix(it.fn)) })).filter(it => it.vi);
+        if (!items.length) return showPageNotification('未识别到番号', 'error', 3000);
         progressBox.init('更新评分', items.length); let p = 0, success = 0;
         const tasks = items.map(it => done => {
             const code = it.vi.queryCode.toUpperCase();
-            const applyRating = (star) => fetch('https://webapi.115.com/files/score', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'file_id=' + encodeURIComponent(it.fid) + '&score=' + star })
-                .then(r => r.json()).then(r => { if (r?.state) success++; }).finally(() => { progressBox.update(++p); done(); });
-
-            if (ratingCache[code]) return applyRating(ratingCache[code]);
-
-            gmRequest({ url: `https://javdb.com/search?q=${encodeURIComponent(code)}&f=all`, headers: COMMON_HEADERS, anonymous: true }).then(res => {
-                const doc = parseHTML(res.responseText);
-                let r = parseFloat(doc.querySelector('.movie-list .item')?.getAttribute('score'));
-                if (!isNaN(r) && r > 0) { ratingCache[code] = Math.round(r); setCache('jb_ratingCache', ratingCache); applyRating(Math.round(r)); }
-                else { progressBox.update(++p); done(); }
-            }).catch(() => { progressBox.update(++p); done(); });
+            getRatingForCode(code).then(star => {
+                if (!star) return;
+                return fetch('https://webapi.115.com/files/score', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'file_id=' + encodeURIComponent(it.fid) + '&score=' + Math.round(star) })
+                    .then(r => r.json()).then(r => { if (r?.state) success++; });
+            }).catch(() => { }).finally(() => { progressBox.update(++p); done(); });
         });
         runTasksWithLimit(tasks, 2, 300, () => { progressBox.finish(); showPageNotification('评分完成：成功 ' + success + '/' + items.length, 'success', 3000); });
     }
@@ -893,6 +1091,7 @@
         document.getElementById('rename2026-settings-shadow')?.remove();
         const s = loadSettings();
         const fieldKeys = String(s.fieldOrder).split(',').map(x => x.trim()).filter(Boolean);
+        Object.keys(FIELD_DEFINITIONS).forEach(k => { if (!fieldKeys.includes(k)) fieldKeys.push(k); });
         const sourceKeys = String(s.sourceOrder).split(',').map(x => x.trim()).filter(Boolean);
         const enabledSrc = new Set(String(s.scrapeSources || '').split(',').map(x => x.trim()).filter(Boolean));
         const srcLabels = { javdb: 'JavDB', javbus: 'JavBus', javlibrary: 'JavLibrary', xslist: 'Xslist', fc2ppvdb: 'FC2PPVDB', missav: 'MissAV', avsox: 'Avsox', avmoo: 'AVMoo', custom: '自定义源' };
@@ -908,33 +1107,44 @@
         style.textContent = `
             :host { --bg: ${isDark ? '#000' : '#f8fafc'}; --panel: ${isDark ? '#000' : '#fff'}; --text: ${isDark ? '#e5e5e5' : '#0f172a'}; --text-muted: ${isDark ? '#888' : '#64748b'}; --border: ${isDark ? '#333' : '#e2e8f0'}; --primary: #2563eb; --hover: ${isDark ? '#1a1a1a' : '#f1f5f9'}; --input-bg: ${isDark ? '#111' : '#fff'}; --input-border: ${isDark ? '#444' : '#cbd5e1'}; }
             * { box-sizing: border-box; }
-            .rs-panel { width: 860px; height: 620px; max-width: 95vw; max-height: 90vh; background: var(--panel); border-radius: 10px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); display: flex; overflow: hidden; color: var(--text); border: 1px solid var(--border); font-family: sans-serif; }
-            .rs-sidebar { width: 160px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 12px 0; flex-shrink: 0; }
-            .rs-logo { font-size: 15px; font-weight: bold; padding: 0 16px 12px; color: var(--primary); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
-            .rs-nav-btn { display: block; width: 100%; text-align: left; padding: 8px 16px; border: none; background: transparent; color: var(--text); font-size: 13px; cursor: pointer; outline: none; }
+            .rs-panel { width: 960px; height: 680px; max-width: 95vw; max-height: 95vh; background: var(--panel); border-radius: 10px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); display: flex; overflow: hidden; color: var(--text); border: 1px solid var(--border); font-family: sans-serif; }
+            
+            /* 面包栏 */
+            .rs-sidebar { width: 130px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 12px 0; flex-shrink: 0; }
+            .rs-logo { font-size: 15px; font-weight: bold; padding: 0 12px 10px; color: var(--primary); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+            .rs-nav-btn { display: block; width: 100%; text-align: left; padding: 8px 12px; border: none; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; outline: none; }
             .rs-nav-btn:hover { background: var(--hover); }
-            .rs-nav-btn.active { background: var(--primary); color: #fff; font-weight: 500; }
-            .rs-sidebar-footer { margin-top: auto; padding: 12px 16px; font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 6px; }
-            .rs-sidebar-footer a { color: var(--primary); text-decoration: none; }
-            .rs-content { flex: 1; padding: 20px 24px; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-            .rs-header { font-size: 14px; font-weight: 600; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
-            .rs-section { display: none; flex-direction: column; gap: 12px; flex: 1; }
+            .rs-nav-btn.active { background: var(--primary); color: #fff; font-weight: 600; }
+            .rs-sidebar-footer { margin-top: auto; padding: 12px; font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; }
+            .rs-sidebar-footer a { color: var(--primary); text-decoration: none; font-weight: 500; }
+            
+            /* 内容区 */
+            .rs-content { flex: 1; padding: 16px 20px; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+            .rs-header { font-size: 13px; font-weight: 600; margin: 4px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+            .rs-section { display: none; flex-direction: column; gap: 8px; flex: 1; overflow: hidden; }
             .rs-section.active { display: flex; }
-            .rs-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-            .rs-row { display: flex; align-items: center; background: var(--bg); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); min-width: 0; overflow: hidden; }
-            .rs-label { font-size: 13px; white-space: nowrap; flex: 1; }
-            .rs-input { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); border-radius: 4px; padding: 4px 6px; font-size: 12px; outline: none; min-width: 0; flex-shrink: 0; }
+            
+            /* 网格与行 */
+            .rs-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+            .rs-row { display: flex; align-items: center; justify-content: space-between; background: var(--bg); padding: 0 10px; height: 34px; border-radius: 6px; border: 1px solid var(--border); min-width: 0; overflow: hidden; }
+            .rs-label { font-size: 13px; white-space: nowrap; flex: 1; color: var(--text); }
+            
+            /* 统一输入框尺寸 */
+            .rs-input { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text); border-radius: 4px; height: 26px; font-size: 13px; outline: none; flex-shrink: 0; box-sizing: border-box; }
             .rs-input:focus { border-color: var(--primary); }
-            .rs-input[type="number"] { width: 60px; text-align: center; }
-            .rs-input[type="text"] { width: 80px; }
-            .rs-checkbox { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; margin: 0; }
-            .drag-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-            .drag-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); min-width: 0; }
+            .rs-input[type="number"], .rs-input[type="text"] { width: 64px; text-align: center; padding: 0; }
+            .rs-checkbox { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; margin: 0; }
+            
+            /* 拖拽列表 */
+            .drag-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+            .drag-item { display: flex; align-items: center; justify-content: space-between; padding: 0 10px; height: 34px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); min-width: 0; }
             .drag-item.dragging { opacity: 0.5; border-style: dashed; border-color: var(--primary); }
             .drag-item.is-required { opacity: 0.7; cursor: default; }
             .drag-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
-            .drag-handle { color: var(--text-muted); font-size: 16px; user-select: none; padding: 0 4px; cursor: grab; flex-shrink: 0; }
-            .rs-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; border-top: 1px solid var(--border); padding-top: 12px; flex-shrink: 0; }
+            .drag-handle { color: var(--text-muted); font-size: 14px; user-select: none; cursor: grab; flex-shrink: 0; }
+            
+            /* 底部按钮 */
+            .rs-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; border-top: 1px solid var(--border); padding-top: 10px; flex-shrink: 0; }
             .rs-btn { padding: 5px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: 1px solid transparent; font-weight: 500; }
             .rs-btn-primary { background: var(--primary); color: #fff; }
             .rs-btn-primary:hover { opacity: 0.9; }
@@ -950,7 +1160,7 @@
                 <button class="rs-nav-btn active" data-target="tab-common">通用</button>
                 <button class="rs-nav-btn" data-target="tab-menu">右键菜单</button>
                 <button class="rs-nav-btn" data-target="tab-sources">刮削源</button>
-                <div class="rs-sidebar-footer"><a href="https://github.com/liuchanghuaX1/115Rename2026" target="_blank">⭐ GitHub</a><span>版本 v${SCRIPT_VERSION}</span></div>
+                <div class="rs-sidebar-footer"><a href="https://github.com/liuchanghuaX1/115Rename2026" target="_blank">⭐ GitHub</a><span>v${SCRIPT_VERSION}</span></div>
             </div>
             <div class="rs-content">
                 <div id="tab-common" class="rs-section active">
@@ -958,23 +1168,24 @@
                     <div class="drag-list" id="rs-field-list">
                         ${fieldKeys.map(key => { const def = FIELD_DEFINITIONS[key]; if (!def) return ''; const checked = def.fixed || (s[def.settingKey] !== false); return `<div class="drag-item ${key === 'code' ? 'is-required' : ''}" data-key="${key}"><div class="drag-left"><input type="checkbox" class="rs-checkbox" data-field-enable="${key}" ${checked ? 'checked' : ''} ${def.fixed ? 'disabled' : ''}><span class="rs-label">${def.label}</span></div><div class="drag-handle">≡</div></div>`; }).join('')}
                     </div>
-                    <div class="rs-header" style="margin-top: 8px;">常规设置</div>
+                    <div class="rs-header">常规设置</div>
                     <div class="rs-grid-2">
                         <div class="rs-row"><span class="rs-label">字段分隔符</span><input class="rs-input" type="text" id="rs-field-sep" value="${escapeHtml(s.fieldSeparator)}"></div>
                         <div class="rs-row"><span class="rs-label">日期前缀</span><input class="rs-input" type="text" id="rs-date-prefix" value="${escapeHtml(s.datePrefix)}"></div>
                         <div class="rs-row"><span class="rs-label">演员分隔符</span><input class="rs-input" type="text" id="rs-actress-sep" value="${escapeHtml(s.actressSeparator)}"></div>
                         <div class="rs-row"><span class="rs-label">分段标记</span><input class="rs-input" type="text" id="rs-segment-prefix" value="${escapeHtml(s.segmentPrefix || '')}"></div>
-                        <div class="rs-row"><span class="rs-label">并发数</span><input class="rs-input" type="number" id="rs-rename-concurrency" value="${s.renameConcurrency}" min="1" max="10"></div>
-                        <div class="rs-row"><span class="rs-label">常规选项</span><div style="display:flex; gap: 16px; align-items:center;">
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input class="rs-checkbox" type="checkbox" id="rs-protect-manual" ${s.protectManualName ? 'checked' : ''}><span class="rs-label">保护命名</span></label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input class="rs-checkbox" type="checkbox" id="rs-enable-markers" ${s.enableMarkers ? 'checked' : ''}><span class="rs-label">附加标记</span></label>
+                        <div class="rs-row"><span class="rs-label">提交并发</span><input class="rs-input" type="number" id="rs-rename-concurrency" value="${s.renameConcurrency}" min="1" max="10"></div>
+                        <div class="rs-row"><span class="rs-label">查询并发</span><input class="rs-input" type="number" id="rs-query-concurrency" value="${s.queryConcurrency || 6}" min="1" max="15"></div>
+                        <div class="rs-row"><span class="rs-label">常规选项</span><div style="display:flex; gap: 12px; align-items:center; height: 100%;">
+                            <label style="display:flex; align-items:center; gap:4px; cursor:pointer;"><input class="rs-checkbox" type="checkbox" id="rs-protect-manual" ${s.protectManualName ? 'checked' : ''}><span class="rs-label" style="flex:none;">保护命名</span></label>
+                            <label style="display:flex; align-items:center; gap:4px; cursor:pointer;"><input class="rs-checkbox" type="checkbox" id="rs-enable-markers" ${s.enableMarkers ? 'checked' : ''}><span class="rs-label" style="flex:none;">附加标记</span></label>
                         </div></div>
                     </div>
-                    <div class="rs-header" style="margin-top: 8px;">归档根目录</div>
-                    <div style="display:flex; gap:8px;">
-                        <input class="rs-input" style="flex:1; width:auto;" type="text" id="rs-archive-path" value="${escapeHtml(s.archiveRootPath || '')}" placeholder="/归档">
-                        <button class="rs-btn rs-btn-primary" id="rs-archive-apply">解析</button>
-                        <button class="rs-btn rs-btn-default" id="rs-clear-archive-root" style="color:#ef4444; border-color:#fca5a5;">清除</button>
+                    <div class="rs-header">归档根目录</div>
+                    <div style="display:flex; gap:8px; height: 34px;">
+                        <input class="rs-input" style="flex:1; width:auto; text-align: left; padding: 0 8px;" type="text" id="rs-archive-path" value="${escapeHtml(s.archiveRootPath || '')}" placeholder="/归档">
+                        <button class="rs-btn rs-btn-primary" id="rs-archive-apply" style="height: 26px; line-height: 1;">解析</button>
+                        <button class="rs-btn rs-btn-default" id="rs-clear-archive-root" style="color:#ef4444; border-color:#fca5a5; height: 26px; line-height: 1;">清除</button>
                     </div>
                     <p style="margin:0;font-size:12px;color:var(--text-muted);">当前：${archiveRootCid ? '「' + escapeHtml(archiveRootPath || archiveRootName) + '」' : '未设置'}</p>
                 </div>
@@ -991,7 +1202,7 @@
                     </div>
                     <div style="margin-top: 8px;">
                         <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">自定义源（使用 <b>{}</b> 代表番号，多个网址用逗号分隔）</div>
-                        <textarea id="rs-custom-sources" class="rs-input" style="width: 100%; height: 60px; resize: none;" placeholder="如: https://www.google.com/search?q={}">${escapeHtml(s.customSources || '')}</textarea>
+                        <textarea id="rs-custom-sources" class="rs-input" style="width: 100%; height: 80px; resize: none; padding: 6px 8px; line-height: 1.4;" placeholder="如: https://www.google.com/search?q={}">${escapeHtml(s.customSources || '')}</textarea>
                     </div>
                 </div>
                 <div class="rs-footer">
@@ -1027,10 +1238,7 @@
                 if (!draggedItem) return;
                 draggedItem.style.top = `${e.clientY - initialRect.height / 2}px`;
                 const target = [...container.querySelectorAll('.drag-item:not(.dragging)')].find(el => { const r = el.getBoundingClientRect(); return e.clientY >= r.top && e.clientY <= r.bottom; });
-                if (target) {
-                    const r = target.getBoundingClientRect();
-                    container.insertBefore(placeholder, e.clientY > r.top + r.height / 2 ? target.nextSibling : target);
-                }
+                if (target) { const r = target.getBoundingClientRect(); container.insertBefore(placeholder, e.clientY > r.top + r.height / 2 ? target.nextSibling : target); }
             }
             function onUp() {
                 if (draggedItem) {
@@ -1075,7 +1283,11 @@
             host.remove(); showPageNotification('已清除归档根', 'info', 2000);
         };
         shadow.getElementById('rs-save').onclick = () => {
-            const em = {};['title', 'zhTitle', 'actresses', 'date'].forEach(k => { em['enable' + k.charAt(0).toUpperCase() + k.slice(1)] = shadow.querySelector(`[data-field-enable="${k}"]`)?.checked; });
+            const em = {};
+            ['title', 'zhTitle', 'actresses', 'date', 'rating'].forEach(k => {
+                const cb = shadow.querySelector(`[data-field-enable="${k}"]`);
+                em['enable' + k.charAt(0).toUpperCase() + k.slice(1)] = cb ? cb.checked : undefined;
+            });
             const mv2 = {}; shadow.querySelectorAll('[data-menu-vis]').forEach(cb => mv2[cb.dataset.menuVis] = cb.checked);
             const newOrder = Array.from(shadow.getElementById('rs-field-list').querySelectorAll('.drag-item')).map(el => el.dataset.key).join(',');
             const newSrcOrder = Array.from(shadow.getElementById('rs-source-list').querySelectorAll('.drag-item')).map(el => el.dataset.key).join(',');
@@ -1083,25 +1295,51 @@
 
             saveSettings({
                 fieldOrder: newOrder, fieldSeparator: shadow.getElementById('rs-field-sep').value || ' ', datePrefix: shadow.getElementById('rs-date-prefix').value,
-                actressSeparator: shadow.getElementById('rs-actress-sep').value || '・', enableTitle: em.enableTitle !== false, enableZhTitle: em.enableZhTitle === true,
-                enableActresses: em.enableActresses !== false, enableDate: em.enableDate !== false, enableMarkers: shadow.getElementById('rs-enable-markers').checked,
+                actressSeparator: shadow.getElementById('rs-actress-sep').value || '・',
+                enableTitle: em.enableTitle !== false,
+                enableZhTitle: em.enableZhTitle === true,
+                enableActresses: em.enableActresses !== false,
+                enableDate: em.enableDate !== false,
+                enableRating: em.enableRating === true,
+                enableMarkers: shadow.getElementById('rs-enable-markers').checked,
                 protectManualName: shadow.getElementById('rs-protect-manual').checked, segmentPrefix: shadow.getElementById('rs-segment-prefix').value,
-                renameConcurrency: Math.max(1, Math.min(10, parseInt(shadow.getElementById('rs-rename-concurrency').value, 10) || 3)),
+                renameConcurrency: Math.max(1, Math.min(10, parseInt(shadow.getElementById('rs-rename-concurrency').value, 10) || 5)),
+                queryConcurrency: Math.max(1, Math.min(15, parseInt(shadow.getElementById('rs-query-concurrency').value, 10) || 6)),
                 sourceOrder: newSrcOrder, scrapeSources: newEnabledSrc.join(','), customSources: shadow.getElementById('rs-custom-sources').value.trim(), menuVisibility: mv2
             });
             showPageNotification('设置已保存', 'success', 2000); host.remove();
         };
     }
 
-    // ==================== 全局样式 ====================
+    // ==================== 全局样式与自适应通知 ====================
     GM_addStyle(`
-        .custom-notification{position:fixed;top:80px;right:20px;max-width:300px;background:rgba(0,0,0,.85);color:#fff;padding:12px 20px;border-radius:4px;z-index:9999;font-size:14px;transition:all .3s;opacity:0;transform:translateY(-10px);}
-        .custom-notification.success{border-left:4px solid #52c41a;} .custom-notification.error{border-left:4px solid #f5222d;} .custom-notification.info{border-left:4px solid #1890ff;}
-        .custom-notification.show{opacity:1;transform:translateY(0);}
+        .custom-notification {
+            position: fixed; top: 80px; right: 20px; max-width: 300px;
+            padding: 12px 20px; border-radius: 6px; z-index: 9999; font-size: 14px;
+            transition: all .3s; opacity: 0; transform: translateY(-10px);
+            background: #fff; color: #333; border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        /* 适配 115 深色模式及系统深色模式 */
+        html[data-theme="dark"] .custom-notification,
+        body.dark .custom-notification {
+            background: #1e1e1e; color: #e5e5e5; border-color: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        @media (prefers-color-scheme: dark) {
+            .custom-notification { background: #1e1e1e; color: #e5e5e5; border-color: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        }
+        .custom-notification.success { border-left: 4px solid #52c41a; }
+        .custom-notification.error { border-left: 4px solid #f5222d; }
+        .custom-notification.info { border-left: 4px solid #1890ff; }
+        .custom-notification.show { opacity: 1; transform: translateY(0); }
+        
         #task-progress-box{position:fixed;bottom:20px;right:20px;min-width:260px;background:rgba(0,0,0,.85);color:#fff;padding:10px 14px;border-radius:4px;z-index:9999;font-size:12px;}
         #task-progress-box .tp-bar-outer{width:100%;height:6px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden;margin-top:6px;}
         #task-progress-box .tp-bar-inner{height:100%;width:0;background:#1890ff;transition:width .2s;}
     `);
 
     try { GM_registerMenuCommand('⚙️ 设置', openSettingsPanel); } catch (e) { }
+
+    console.log('115Rename2026 v' + SCRIPT_VERSION + ' 正式版已加载');
 })();
