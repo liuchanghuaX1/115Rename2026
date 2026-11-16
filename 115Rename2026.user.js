@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            115Rename2026
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         3.1.0
+// @version         3.1.1
 // @description     115 改名工具｜双源混合刮削｜极速竞速机制｜并发池化｜深色模式适配｜正式版
 // @author          sonarlee
 // @include         https://115.com/*
@@ -25,7 +25,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.1.0';
+    const SCRIPT_VERSION = '3.1.1';
 
     // ==================== 番号识别算法 ====================
     const OD = (function () {
@@ -118,6 +118,7 @@
     };
     const GARBAGE_WORDS = ['FHD', 'FULLHD', 'UHD', 'QHD', 'HD', 'SD', 'HDR', '2160P', '1440P', '1080P', '720P', '480P', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC', '10BIT', '8BIT', 'AAC', 'AC3', 'DTS', 'MP4', 'MKV', 'AVI', 'WMV', 'ISO', 'TS', 'HHB', 'HHC', 'HHD', 'HHH'];
     const RESOLUTION_FPS_PATTERN = /(?<![A-Za-z0-9])(?:2160[Pp]|1440[Pp]|1080[PpIi]?|720[PpIi]?|480[Pp]|FHD|UHD|HDR10?|10[Bb][Ii][Tt]|8[Bb][Ii][Tt]|(?:24|25|30|50|60|120|144)\s*[Ff][Pp][Ss]|[Ff][Pp][Ss])(?![A-Za-z0-9])/gi;
+    const CODEC_PATTERN = /\b(?:h2|h264|h265|hevc|avc)\b/gi;
 
     const MARKER_MAP = {
         '无码破解': '破解', '无码流出': '流出', '无修正': '无码', '無修正': '无码', '无码': '无码', '無碼': '无码',
@@ -336,19 +337,29 @@
             let cleanForCode = rawForCode.replace(/[-_.\s]*hh[bcdh]\d*/gi, ' ').replace(/[-_.\s]*(?:4k|4ks|8k|2160p|1080p|720p)?\s*(?:60|120|30)\s*fps/gi, ' ').replace(/[-_.\s]*\b(?:4k|8k|2160p|1080p|720p)\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
             let part = '';
+            let partMatch = null;
+            const pm = rawForCode.match(/(?:^|[^A-Za-z0-9])(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\s\[\](){}]*0*(\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])/i);
+            if (pm) {
+                part = pm[1];
+                partMatch = pm[0];
+            } else {
+                const numMatch = rawForCode.match(/[_.\-]\s*(\d{1,2})(?=$|[^0-9A-Za-z])/);
+                if (numMatch) part = numMatch[1];
+            }
+
             let queryCode = null;
             let matchToReplace = null;
 
             const fc2Match = cleanForCode.match(/\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})(?:[-_\s](\d{1,2}|[A-Za-z]))?(?=$|[^0-9A-Za-z])/i);
             if (fc2Match) {
                 queryCode = 'FC2-PPV-' + fc2Match[1];
-                if (fc2Match[2]) part = fc2Match[2];
+                if (!part && fc2Match[2]) part = fc2Match[2];
                 matchToReplace = fc2Match[0];
             } else {
                 const normalMatch = cleanForCode.match(/\b([A-Z0-9][A-Z0-9]{1,14})[-_\s](\d{2,10})(?:[-_](\d{1,3}|[A-Za-z]))?(?=$|[^0-9A-Za-z])/i);
                 if (normalMatch) {
                     queryCode = normalMatch[1].toUpperCase() + '-' + normalMatch[2];
-                    if (normalMatch[3]) part = normalMatch[3];
+                    if (!part && normalMatch[3]) part = normalMatch[3];
                     matchToReplace = normalMatch[0];
                 }
             }
@@ -373,8 +384,10 @@
             const escapedCode = escapeRegExp(baseCode).replace(/\\-/g, '[-_.\\s]*');
             cleanForCode = cleanForCode.replace(new RegExp('\\b' + escapedCode + '(?![0-9])', 'gi'), ' ');
 
-            if (part) {
-                cleanForCode = cleanForCode.replace(new RegExp('[-_.\\s]*(?:cd|part|pt|disc|vol|volume|ep|sp)?[-_.\\s]*0*' + escapeRegExp(part) + '(?=$|[^0-9A-Za-z])', 'gi'), ' ');
+            if (partMatch) {
+                cleanForCode = cleanForCode.replace(partMatch, ' ');
+            } else if (part) {
+                cleanForCode = cleanForCode.replace(new RegExp('[_.\\-]\\s*0*' + escapeRegExp(part) + '(?=$|[^0-9A-Za-z])', 'i'), ' ');
             }
 
             if (checkUncensored(baseCode, rawForCode) && markers.indexOf('无码') === -1) markers.push('无码');
@@ -392,6 +405,7 @@
 
             let cleanTitle = removeMarkers(cleanForCode)
                 .replace(RESOLUTION_FPS_PATTERN, ' ')
+                .replace(CODEC_PATTERN, ' ') // 清理 h2 等编码残渣
                 .replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ')
                 .replace(/[_\.]+/g, ' ')
                 .replace(/[-]+/g, ' ')
@@ -641,7 +655,6 @@
         const key = code.toUpperCase();
         if (isInfoCacheValid(key)) return infoCache[key];
 
-        // 1. 极速尝试老司机接口 (最多等3秒，避免卡住)
         try {
             const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
             if (UW.__LAOSIJI_PAN115_WORK_INFO__?.resolve) {
@@ -656,7 +669,6 @@
             }
         } catch (e) { }
 
-        // 2. 如果老司机没拿到，再并发查内置源，采用竞速模式，谁先成功用谁的
         if (isNegativeCached(key)) return Promise.reject(new Error('Negative'));
 
         const s = loadSettings(), enabled = new Set(String(s.scrapeSources || '').split(',').map(x => x.trim()));
@@ -674,13 +686,12 @@
 
         if (!promises.length) return Promise.reject(new Error('No sources'));
 
-        // 竞速模式
         return new Promise((resolve, reject) => {
             let settled = false;
             let failCount = 0;
             const timer = setTimeout(() => {
                 if (!settled) { settled = true; markNegativeCached(key); reject(new Error('Timeout')); }
-            }, 10000); // 10秒硬超时
+            }, 10000);
 
             promises.forEach(p => {
                 p.then(val => {
@@ -945,7 +956,6 @@
             const tasks = parsedItems.map((item, idx) => cb => processItem(item).then(res => { results[idx] = res; cb(); }));
             runTasksWithLimit(tasks, conc, 0, () => done(results.filter(Boolean)));
         } else {
-            // 先并发预取并池化
             const fetchTasks = missing.map(code => cb => fetchRemoteInfo(code).catch(() => { }).finally(cb));
             runTasksWithLimit(fetchTasks, conc, 100, () => {
                 const results = new Array(parsedItems.length);
@@ -981,8 +991,6 @@
             progressBox.init(isLocal ? '本地规范' : '联网改名', rows.length);
             renameCompareList = []; let processed = 0;
             const tasks = rows.map(row => done => send_115(row.item.fid, row.newName, row.item.vi.fullCode, row.item.fn, () => { progressBox.update(++processed); done(); }));
-
-            // 本地处理并发5，极速间隔50ms；联网处理按用户并发，极速间隔50ms
             runTasksWithLimit(tasks, isLocal ? 5 : loadSettings().renameConcurrency, 50, finishRename);
         };
         if (isLocal) buildPreviewRows(parsedItems, true, rows => showRenamePreview(rows, execRename, cancelRename));

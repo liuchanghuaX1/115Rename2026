@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            115Rename2026Debug
 // @namespace       https://github.com/liuchanghuaX1/115Rename2026
-// @version         3.1.0-beta.8
-// @description     115 改名工具｜Debug 测试版｜极速竞速刮削机制｜预览深色适配｜统一输入框尺寸｜Toast自适应
+// @version         3.1.0-beta.10
+// @description     115 改名工具｜3.1.0β10｜极速刮削｜彻底修复 part 后缀分段识别｜清除 h2 等编码残留
 // @author          sonarlee
 // @include         https://115.com/*
 // @icon            https://115.com/favicon.ico
@@ -18,14 +18,12 @@
 // @grant           unsafeWindow
 // @license         MIT
 // @run-at          document-idle
-// @updateURL       https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026Debug.user.js
-// @downloadURL     https://raw.githubusercontent.com/liuchanghuaX1/115Rename2026/main/115Rename2026Debug.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.1.0β8-Debug';
+    const SCRIPT_VERSION = '3.1.0β10';
 
     // ==================== 番号识别算法 ====================
     const OD = (function () {
@@ -118,6 +116,7 @@
     };
     const GARBAGE_WORDS = ['FHD', 'FULLHD', 'UHD', 'QHD', 'HD', 'SD', 'HDR', '2160P', '1440P', '1080P', '720P', '480P', 'X264', 'X265', 'H264', 'H265', 'HEVC', 'AVC', '10BIT', '8BIT', 'AAC', 'AC3', 'DTS', 'MP4', 'MKV', 'AVI', 'WMV', 'ISO', 'TS', 'HHB', 'HHC', 'HHD', 'HHH'];
     const RESOLUTION_FPS_PATTERN = /(?<![A-Za-z0-9])(?:2160[Pp]|1440[Pp]|1080[PpIi]?|720[PpIi]?|480[Pp]|FHD|UHD|HDR10?|10[Bb][Ii][Tt]|8[Bb][Ii][Tt]|(?:24|25|30|50|60|120|144)\s*[Ff][Pp][Ss]|[Ff][Pp][Ss])(?![A-Za-z0-9])/gi;
+    const CODEC_PATTERN = /\b(?:h2|h264|h265|hevc|avc)\b/gi;
 
     const MARKER_MAP = {
         '无码破解': '破解', '无码流出': '流出', '无修正': '无码', '無修正': '无码', '无码': '无码', '無碼': '无码',
@@ -230,9 +229,9 @@
     };
 
     function handleMenuAction(actionId) {
-        if (actionId === 'local_code_process') renameDebug(local_rename_debug);
-        else if (actionId === 'rename_all_multi_date') { saveSettings({ translateChinese: false }); renameDebug(rename_multi_debug); }
-        else if (actionId === 'rename_all_multi_zh') { saveSettings({ translateChinese: true }); renameDebug(rename_multi_debug); }
+        if (actionId === 'local_code_process') rename(local_rename);
+        else if (actionId === 'rename_all_multi_date') { saveSettings({ translateChinese: false }); rename(rename_multi); }
+        else if (actionId === 'rename_all_multi_zh') { saveSettings({ translateChinese: true }); rename(rename_multi); }
         else if (actionId === 'archive_to_folder') archiveToActorFolder();
         else if (actionId === 'archive_to_bucket') archiveToBucketFolder();
         else if (actionId === 'set_archive_root') setArchiveRoot();
@@ -336,19 +335,29 @@
             let cleanForCode = rawForCode.replace(/[-_.\s]*hh[bcdh]\d*/gi, ' ').replace(/[-_.\s]*(?:4k|4ks|8k|2160p|1080p|720p)?\s*(?:60|120|30)\s*fps/gi, ' ').replace(/[-_.\s]*\b(?:4k|8k|2160p|1080p|720p)\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
             let part = '';
+            let partMatch = null;
+            const pm = rawForCode.match(/(?:^|[^A-Za-z0-9])(?:cd|part|pt|disc|vol|volume|ep|sp)[-_.\s\[\](){}]*0*(\d{1,3}|[a-d])(?=$|[^0-9A-Za-z])/i);
+            if (pm) {
+                part = pm[1];
+                partMatch = pm[0];
+            } else {
+                const numMatch = rawForCode.match(/[_.\-]\s*(\d{1,2})(?=$|[^0-9A-Za-z])/);
+                if (numMatch) part = numMatch[1];
+            }
+
             let queryCode = null;
             let matchToReplace = null;
 
             const fc2Match = cleanForCode.match(/\b(?:FC2[-_\s]?(?:PPV[-_\s]?)?|PPV[-_\s]?)(\d{6,9})(?:[-_\s](\d{1,2}|[A-Za-z]))?(?=$|[^0-9A-Za-z])/i);
             if (fc2Match) {
                 queryCode = 'FC2-PPV-' + fc2Match[1];
-                if (fc2Match[2]) part = fc2Match[2];
+                if (!part && fc2Match[2]) part = fc2Match[2];
                 matchToReplace = fc2Match[0];
             } else {
                 const normalMatch = cleanForCode.match(/\b([A-Z0-9][A-Z0-9]{1,14})[-_\s](\d{2,10})(?:[-_](\d{1,3}|[A-Za-z]))?(?=$|[^0-9A-Za-z])/i);
                 if (normalMatch) {
                     queryCode = normalMatch[1].toUpperCase() + '-' + normalMatch[2];
-                    if (normalMatch[3]) part = normalMatch[3];
+                    if (!part && normalMatch[3]) part = normalMatch[3];
                     matchToReplace = normalMatch[0];
                 }
             }
@@ -373,8 +382,10 @@
             const escapedCode = escapeRegExp(baseCode).replace(/\\-/g, '[-_.\\s]*');
             cleanForCode = cleanForCode.replace(new RegExp('\\b' + escapedCode + '(?![0-9])', 'gi'), ' ');
 
-            if (part) {
-                cleanForCode = cleanForCode.replace(new RegExp('[-_.\\s]*(?:cd|part|pt|disc|vol|volume|ep|sp)?[-_.\\s]*0*' + escapeRegExp(part) + '(?=$|[^0-9A-Za-z])', 'gi'), ' ');
+            if (partMatch) {
+                cleanForCode = cleanForCode.replace(partMatch, ' ');
+            } else if (part) {
+                cleanForCode = cleanForCode.replace(new RegExp('[_.\\-]\\s*0*' + escapeRegExp(part) + '(?=$|[^0-9A-Za-z])', 'i'), ' ');
             }
 
             if (checkUncensored(baseCode, rawForCode) && markers.indexOf('无码') === -1) markers.push('无码');
@@ -392,6 +403,7 @@
 
             let cleanTitle = removeMarkers(cleanForCode)
                 .replace(RESOLUTION_FPS_PATTERN, ' ')
+                .replace(CODEC_PATTERN, ' ') // 清理 h2 等编码残渣
                 .replace(/\[.*?\]|\(.*?\)|【.*?】|\{.*?\}|（.*?）/g, ' ')
                 .replace(/[_\.]+/g, ' ')
                 .replace(/[-]+/g, ' ')
@@ -467,7 +479,7 @@
         const variants = [codeStr, codeStr.replace(/-/g, '')];
         if (prefix && num) variants.push(prefix + '-' + num, prefix + '_' + num, prefix + ' ' + num, prefix + num);
         variants.forEach(v => { if (v) base = base.replace(new RegExp(escapeRegExp(v).replace(/[-_\s]+/g, '[-_\\s]*'), 'ig'), ' '); });
-        base = base.replace(/[\[\]【】()（）{}<>《》「」『』._,，。+~!@#$%^&;:=、\/\|]+/g, ' ').replace(/\s+/g, ' ').trim();
+        base = base.replace(/[\[\]【】()（）{}<>《》「」『』._,，。+~!@#���%^&;:=、\/\|]+/g, ' ').replace(/\s+/g, ' ').trim();
         if (!base) return false;
         if (/[぀-ヿ㐀-鿿]/.test(base)) return true;
         const asciiWords = (base.match(/[A-Za-z]{3,}/g) || []).filter(w => !/^(the|and|for|with|you|your|her|his|new|hot|sex|jav|av)$/i.test(w));
@@ -630,7 +642,6 @@
     function fetchRemoteInfo(code) {
         const key = code.toUpperCase();
         if (inflightQueries.has(key)) {
-            console.log('[Rename2026] inflight reuse:', key);
             return inflightQueries.get(key);
         }
         const p = _fetchRemoteInfoImpl(code).finally(() => { inflightQueries.delete(key); });
@@ -642,7 +653,6 @@
         const key = code.toUpperCase();
         if (isInfoCacheValid(key)) return infoCache[key];
 
-        // 1. 极速尝试老司机接口 (最多等3秒，避免卡住)
         try {
             const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
             if (UW.__LAOSIJI_PAN115_WORK_INFO__?.resolve) {
@@ -657,7 +667,6 @@
             }
         } catch (e) { }
 
-        // 2. 如果老司机没拿到，再并发查内置源，采用竞速模式，谁先成功用谁的
         if (isNegativeCached(key)) return Promise.reject(new Error('Negative'));
 
         const s = loadSettings(), enabled = new Set(String(s.scrapeSources || '').split(',').map(x => x.trim()));
@@ -675,13 +684,12 @@
 
         if (!promises.length) return Promise.reject(new Error('No sources'));
 
-        // 竞速模式
         return new Promise((resolve, reject) => {
             let settled = false;
             let failCount = 0;
             const timer = setTimeout(() => {
                 if (!settled) { settled = true; markNegativeCached(key); reject(new Error('Timeout')); }
-            }, 10000); // 10秒硬超时
+            }, 10000);
 
             promises.forEach(p => {
                 p.then(val => {
@@ -761,7 +769,7 @@
 
     // ==================== 核心业务调度 ====================
     let renameCompareList = [];
-    window.rename_multi_debug = function (fid, vInfo, suffix, callback, origFilename) {
+    window.rename_multi = function (fid, vInfo, suffix, callback, origFilename) {
         getTargetName(vInfo, suffix).then(newName => {
             if (newName) send_115(fid, newName, vInfo.fullCode, origFilename, callback);
             else {
@@ -775,7 +783,7 @@
         }).catch(() => { if (typeof callback === 'function') callback(); });
     };
 
-    function local_rename_debug(fid, vInfo, suffix, callback, origFilename) {
+    function local_rename(fid, vInfo, suffix, callback, origFilename) {
         const newName = buildNewName(vInfo, { title: vInfo.localTitle, date: vInfo.date, actresses: [] }, suffix);
         send_115(fid, newName, vInfo.fullCode, origFilename, callback);
     }
@@ -946,7 +954,6 @@
             const tasks = parsedItems.map((item, idx) => cb => processItem(item).then(res => { results[idx] = res; cb(); }));
             runTasksWithLimit(tasks, conc, 0, () => done(results.filter(Boolean)));
         } else {
-            // 先并发预取并池化
             const fetchTasks = missing.map(code => cb => fetchRemoteInfo(code).catch(() => { }).finally(cb));
             runTasksWithLimit(fetchTasks, conc, 100, () => {
                 const results = new Array(parsedItems.length);
@@ -956,7 +963,7 @@
         }
     }
 
-    function renameDebug(call) {
+    function rename(call) {
         if (window.renameInProgress) return showPageNotification('已有任务进行中', 'info', 2000);
         window.renameInProgress = true;
         const tStart = performance.now();
@@ -966,28 +973,26 @@
         selected.forEach(item => { const ss = getSafeSuffix(item.fn); const vi = parseVideoInfo(item.fn, ss); if (vi) parsedItems.push({ fid: item.fid, fn: item.fn, safeSuffix: ss, vi }); });
         if (!parsedItems.length) { console.error('[Rename2026] 未识别到有效番号'); window.renameInProgress = false; return; }
 
-        const isLocal = (call === local_rename_debug);
+        const isLocal = (call === local_rename);
         const finishRename = () => {
             progressBox.finish();
             setCache('jb_infoCache', infoCache); setCache('jb_negativeCache', negativeCache);
             setCache('rename2026_translationCache', translationCache); setCache('rename2026_ratingNeg', ratingNegCache);
             window.renameInProgress = false;
-            console.log(`[Rename2026] renameDebug total ${(performance.now() - tStart).toFixed(0)}ms, parsed=${parsedItems.length}`);
+            console.log(`[Rename2026] rename total ${(performance.now() - tStart).toFixed(0)}ms, parsed=${parsedItems.length}`);
             offerCompareExport();
         };
         const cancelRename = () => { window.renameInProgress = false; };
 
         const execRename = rows => {
             if (!rows.length) return cancelRename();
-            progressBox.init(isLocal ? '本地规范 (debug)' : '联网改名 (debug)', rows.length);
+            progressBox.init(isLocal ? '本地规范' : '联网改名', rows.length);
             renameCompareList = []; let processed = 0;
             const tasks = rows.map(row => done => send_115(row.item.fid, row.newName, row.item.vi.fullCode, row.item.fn, () => { progressBox.update(++processed); done(); }));
-
-            // 本地处理并发5，极速间隔50ms；联网处理按用户并发，极速间隔50ms
             runTasksWithLimit(tasks, isLocal ? 5 : loadSettings().renameConcurrency, 50, finishRename);
         };
         if (isLocal) buildPreviewRows(parsedItems, true, rows => showRenamePreview(rows, execRename, cancelRename));
-        else { console.log('[Rename2026] 正在生成预览...'); buildPreviewRows(parsedItems, false, rows => showRenamePreview(rows, execRename, cancelRename)); }
+        else { buildPreviewRows(parsedItems, false, rows => showRenamePreview(rows, execRename, cancelRename)); }
     }
 
     // ==================== 归档与评分 ====================
@@ -1087,7 +1092,7 @@
         runTasksWithLimit(tasks, 2, 300, () => { progressBox.finish(); showPageNotification('评分完成：成功 ' + success + '/' + items.length, 'success', 3000); });
     }
 
-    // ==================== 设置面板（统一尺寸与字号） ====================
+    // ==================== 设置面板 ====================
     function openSettingsPanel() {
         document.getElementById('rename2026-settings-shadow')?.remove();
         const s = loadSettings();
@@ -1340,56 +1345,7 @@
         #task-progress-box .tp-bar-inner{height:100%;width:0;background:#1890ff;transition:width .2s;}
     `);
 
-    // ==================== 测试 / 调试接口 ====================
-    const TEST_API = {
-        version: SCRIPT_VERSION,
-        extractCode: OD.extractCode,
-        normalizeCode: OD.normalizeCode,
-        parseVideoInfo: (filename, suffix) => parseVideoInfo(filename, suffix || getSafeSuffix(filename)),
-        buildNewName,
-        buildNameFromInfo,
-        hasManualNamePayload,
-        fetchRemoteInfo: (code) => fetchRemoteInfo(code),
-        getTargetName,
-        getRatingForCode,
-        getCachedTranslation,
-        setCachedTranslation,
-        isRatingNegativeCached,
-        markRatingNegative,
-        __testInflight: () => Array.from(inflightQueries.keys()),
-        __testInflightRatings: () => Array.from(inflightRatings.keys()),
-        __testTranslationCache: { get: getCachedTranslation, set: setCachedTranslation, raw: () => translationCache },
-        __testRatingNegative: { is: isRatingNegativeCached, mark: markRatingNegative },
-        __testPickFidFn: { fid: pickFid, fn: pickFn },
-        getSettings: () => JSON.parse(JSON.stringify(loadSettings())),
-        setSettings: (p) => { saveSettings(p); return loadSettings(); },
-        renameDebug: (mode) => {
-            if (mode === 'local') return renameDebug(local_rename_debug);
-            return renameDebug(rename_multi_debug);
-        },
-        localRenameDebug: () => renameDebug(local_rename_debug),
-        remoteRenameDebug: () => renameDebug(rename_multi_debug),
-        clearCache: () => {
-            infoCache = {}; setCache('jb_infoCache', infoCache);
-            ratingCache = {}; setCache('jb_ratingCache', ratingCache);
-            negativeCache = {}; setCache('jb_negativeCache', negativeCache);
-            ratingNegCache = {}; setCache('rename2026_ratingNeg', ratingNegCache);
-            translationCache = {}; setCache('rename2026_translationCache', translationCache);
-            console.log('[Rename2026] 所有缓存已清空');
-        }
-    };
-
-    try {
-        window.__RENAME2026_TEST__ = TEST_API;
-        window.__RENAME2026_DEBUG__ = TEST_API;
-        if (typeof unsafeWindow !== 'undefined' && unsafeWindow) {
-            unsafeWindow.__RENAME2026_TEST__ = TEST_API;
-            unsafeWindow.__RENAME2026_DEBUG__ = TEST_API;
-        }
-        console.log('[Rename2026] 测试/调试接口已暴露: __RENAME2026_TEST__ / __RENAME2026_DEBUG__');
-    } catch (e) { }
-
     try { GM_registerMenuCommand('⚙️ 设置', openSettingsPanel); } catch (e) { }
 
-    console.log('115Rename2026Debug v' + SCRIPT_VERSION + ' 已加载（Toast 自适应 + 统一尺寸）');
+    console.log('115Rename2026Debug v' + SCRIPT_VERSION + ' 已加载');
 })();
